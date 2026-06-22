@@ -31,6 +31,7 @@ crossbeam-channel.workspace = true
 crossterm.workspace = true
 flate2.workspace = true
 futures.workspace = true
+geojson.workspace = true
 glob.workspace = true
 globset.workspace = true
 hotpath.workspace = true
@@ -54,6 +55,9 @@ tokio.workspace = true
 usize_cast.workspace = true
 walkdir.workspace = true
 xxhash-rust.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

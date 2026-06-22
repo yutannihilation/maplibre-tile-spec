@@ -1,5 +1,6 @@
 pub mod convert;
 pub mod dump;
+pub mod geojson;
 pub mod ls;
 pub mod ui;
 
@@ -16,6 +17,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use crate::convert::{ConvertArgs, convert};
 use crate::dump::{AfterDump, DumpArgs, dump};
+use crate::geojson::{GeoJsonArgs, geojson};
 use crate::ls::{LsArgs, ls};
 use crate::ui::{UiArgs, ui};
 
@@ -23,6 +25,7 @@ use crate::ui::{UiArgs, ui};
 fn main() -> AnyResult<()> {
     match Cli::parse().command {
         Commands::Convert(args) => convert(&args)?,
+        Commands::Geojson(args) => geojson(&args)?,
         Commands::Dump(args) => dump(&args, AfterDump::KeepRaw)?,
         Commands::Decode(args) => dump(&args, AfterDump::Decode)?,
         Commands::Ls(args) => {
@@ -48,6 +51,8 @@ struct Cli {
 enum Commands {
     /// Convert .mlt, .mvt, and .pbf tiles in a directory tree to re-encoded .mlt files
     Convert(ConvertArgs),
+    /// Convert a (possibly 3D) WGS84 `GeoJSON` file into MLT tiles (z/x/y.mlt tree)
+    Geojson(GeoJsonArgs),
     /// Parse a tile file (.mlt, .mvt, .pbf) and dump raw layer data without decoding
     Dump(DumpArgs),
     /// Parse a tile file (.mlt, .mvt, .pbf), decode all layers, and dump the result
