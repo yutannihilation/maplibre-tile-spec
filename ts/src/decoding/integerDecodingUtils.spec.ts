@@ -31,6 +31,7 @@ import {
     decodeRleDeltaInt32,
     decodeComponentwiseDeltaVec2,
     decodeComponentwiseDeltaVec2Scaled,
+    decodeComponentwiseDeltaVec3,
 } from "./integerDecodingUtils";
 import IntWrapper from "./intWrapper";
 import {
@@ -417,5 +418,31 @@ describe("IntegerDecodingUtils", () => {
             /invalid encodedByteLength=3/,
         );
         expect(offset.get()).toBe(0);
+    });
+});
+
+describe("decodeComponentwiseDeltaVec3", () => {
+    const zigzag = (v: number): number => (v << 1) ^ (v >> 31);
+
+    it("reconstructs 3D vertices from per-component zigzag deltas", () => {
+        // vertices: (1,2,3), (4,6,8), (5,5,5)
+        // first vertex absolute; then per-component deltas (3,4,5) and (1,-1,-3)
+        const data = new Uint32Array([
+            zigzag(1),
+            zigzag(2),
+            zigzag(3),
+            zigzag(3),
+            zigzag(4),
+            zigzag(5),
+            zigzag(1),
+            zigzag(-1),
+            zigzag(-3),
+        ]);
+        expect(Array.from(decodeComponentwiseDeltaVec3(data))).toEqual([1, 2, 3, 4, 6, 8, 5, 5, 5]);
+    });
+
+    it("handles a single 3D vertex (no deltas)", () => {
+        const data = new Uint32Array([zigzag(10), zigzag(20), zigzag(30)]);
+        expect(Array.from(decodeComponentwiseDeltaVec3(data))).toEqual([10, 20, 30]);
     });
 });

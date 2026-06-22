@@ -5,5 +5,6 @@ export { GpuVector } from "./vector/geometry/gpuVector";
 export { default as GeometryScaling } from "./decoding/geometryScaling";
 export { GEOMETRY_TYPE } from "./vector/geometry/geometryType";
 export type { TileSetMetadata } from "./metadata/tileset/tilesetMetadata";
-export type { Geometry } from "./vector/geometry/geometryVector";
+export type { Geometry, GeometryZ, PointZ } from "./vector/geometry/geometryVector";
+export type { CoordinateDimension } from "./vector/geometry/coordinateDimension";
 export type { Feature } from "./vector/featureTable";

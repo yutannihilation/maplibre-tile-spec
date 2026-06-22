@@ -369,4 +369,76 @@ mod three_d {
         assert_eq!(out, g);
         assert_eq!(out.dimension(), Dimension::XY);
     }
+
+    /// One-off generator for the TypeScript 3D decode fixture (`@maplibre/mlt`).
+    ///
+    /// Ignored in normal runs. Regenerate with:
+    /// `cargo test -p mlt-core --lib -- --ignored generate_ts_3d_fixture --nocapture`
+    ///
+    /// Produces a multi-layer tile (each layer a single geometry type, so the decoder
+    /// takes the CONST path) written to the TS package fixtures dir.
+    #[test]
+    #[ignore = "writes a fixture file into ../../ts; run explicitly to regenerate"]
+    fn generate_ts_3d_fixture() {
+        use std::io::Write as _;
+
+        fn encode_one(name: &str, geom: &Wkt<i32>) -> Vec<u8> {
+            let mut b = TileLayer::builder(name, 4096).unwrap();
+            let mut f = b.feature(geom);
+            f.id(Some(1));
+            f.finish().unwrap();
+            b.finish().encode(EncoderConfig::default()).unwrap()
+        }
+
+        let mut bytes: Vec<u8> = Vec::new();
+
+        bytes.extend(encode_one(
+            "point_z",
+            &Wkt::Point(Point::from_coord(xyz(10, 20, 30))),
+        ));
+        bytes.extend(encode_one(
+            "linestring_z",
+            &Wkt::LineString(LineString::new(
+                vec![xyz(1, 2, 3), xyz(4, 5, 6), xyz(7, 8, 9)],
+                Dimension::XYZ,
+            )),
+        ));
+        bytes.extend(encode_one(
+            "polygon_z",
+            &Wkt::Polygon(Polygon::new(
+                vec![LineString::new(
+                    vec![
+                        xyz(0, 0, 1),
+                        xyz(10, 0, 2),
+                        xyz(10, 10, 3),
+                        xyz(0, 10, 4),
+                        xyz(0, 0, 1),
+                    ],
+                    Dimension::XYZ,
+                )],
+                Dimension::XYZ,
+            )),
+        ));
+        bytes.extend(encode_one(
+            "multipoint_z",
+            &Wkt::MultiPoint(MultiPoint::new(
+                vec![
+                    Point::from_coord(xyz(1, 2, 3)),
+                    Point::from_coord(xyz(4, 5, 6)),
+                ],
+                Dimension::XYZ,
+            )),
+        ));
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../ts/src/decoding/__fixtures__/geom_z.mlt"
+        );
+        std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+        std::fs::File::create(path)
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
+        eprintln!("wrote {} bytes to {path}", bytes.len());
+    }
 }

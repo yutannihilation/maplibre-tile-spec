@@ -28,7 +28,12 @@ import type GeometryScaling from "./decoding/geometryScaling";
 import { decodeBooleanRle } from "./decoding/decodingUtils";
 import { DoubleFlatVector } from "./vector/flat/doubleFlatVector";
 import { decodeEmbeddedTileSetMetadata } from "./metadata/tileset/embeddedTilesetMetadataDecoder";
-import { hasStreamCount, isGeometryColumn, isLogicalIdColumn } from "./metadata/tileset/typeMap";
+import {
+    geometryColumnDimensions,
+    hasStreamCount,
+    isGeometryColumn,
+    isLogicalIdColumn,
+} from "./metadata/tileset/typeMap";
 import type { StreamMetadata } from "./metadata/tile/streamMetadataDecoder";
 import type { GeometryVector } from "./vector/geometry/geometryVector";
 import type Vector from "./vector/vector";
@@ -120,7 +125,15 @@ export default function decodeTile(
                     geometryScaling.scale = geometryScaling.extent / extent;
                 }
 
-                geometryVector = decodeGeometryColumn(tile, numStreams, offset, numFeatures, geometryScaling);
+                const numDimensions = geometryColumnDimensions(columnMetadata);
+                geometryVector = decodeGeometryColumn(
+                    tile,
+                    numStreams,
+                    offset,
+                    numFeatures,
+                    geometryScaling,
+                    numDimensions,
+                );
             } else {
                 const columnHasStreamCount = hasStreamCount(columnMetadata);
                 const numStreams = columnHasStreamCount ? decodeVarintInt32(tile, offset, 1)[0] : 1;

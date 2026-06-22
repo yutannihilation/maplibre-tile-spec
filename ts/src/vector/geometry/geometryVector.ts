@@ -1,14 +1,32 @@
 import { convertGeometryVector } from "./geometryVectorConverter";
 import { decodeZOrderCurve } from "./zOrderCurve";
 import type Point from "@mapbox/point-geometry";
+import type { CoordinateDimension } from "./coordinateDimension";
 import type { GEOMETRY_TYPE } from "./geometryType";
-import type { VertexBufferType } from "./vertexBufferType";
+import { VertexBufferType } from "./vertexBufferType";
 import type { TopologyVector } from "../../vector/geometry/topologyVector";
 
+/**
+ * A 3D vertex in tile coordinates. Standalone (not a `@mapbox/point-geometry` `Point`, which is
+ * strictly 2D) so the `z` is always present. Emitted only for `GEOMETRY_Z` columns.
+ */
+export interface PointZ {
+    x: number;
+    y: number;
+    z: number;
+}
+
 export type CoordinatesArray = Array<Array<Point>>;
+export type CoordinatesArrayZ = Array<Array<PointZ>>;
 
 export type Geometry = {
     coordinates: CoordinatesArray;
+    type: GEOMETRY_TYPE;
+};
+
+/** 3D geometry: identical shape to {@link Geometry} but with {@link PointZ} coordinates. */
+export type GeometryZ = {
+    coordinates: CoordinatesArrayZ;
     type: GEOMETRY_TYPE;
 };
 
@@ -42,10 +60,19 @@ export abstract class GeometryVector {
         return this._vertexBuffer;
     }
 
+    /**
+     * Coordinate dimensionality of this column: 3 for `VEC_3` (`GEOMETRY_Z`), otherwise 2.
+     * The vertex buffer is interleaved at this many components per vertex.
+     */
+    get numDimensions(): CoordinateDimension {
+        return this._vertexBufferType === VertexBufferType.VEC_3 ? 3 : 2;
+    }
+
     /* Allows faster access to the vertices since morton encoding is currently not used in the POC. Morton encoding
        will be used after adapting the shader to decode the morton codes on the GPU. */
     getSimpleEncodedVertex(index: number): [number, number] {
-        const offset = this.vertexOffsets ? this.vertexOffsets[index] * 2 : index * 2;
+        const stride = this.numDimensions;
+        const offset = this.vertexOffsets ? this.vertexOffsets[index] * stride : index * stride;
         const x = this.vertexBuffer[offset];
         const y = this.vertexBuffer[offset + 1];
         return [x, y];
@@ -66,13 +93,14 @@ export abstract class GeometryVector {
             return [vertex.x, vertex.y];
         }
 
-        const offset = this.vertexOffsets ? this.vertexOffsets[index] * 2 : index * 2;
+        const stride = this.numDimensions;
+        const offset = this.vertexOffsets ? this.vertexOffsets[index] * stride : index * stride;
         const x = this.vertexBuffer[offset];
         const y = this.vertexBuffer[offset + 1];
         return [x, y];
     }
 
-    getGeometries(): CoordinatesArray[] {
+    getGeometries(): Array<CoordinatesArray | CoordinatesArrayZ> {
         return convertGeometryVector(this);
     }
 

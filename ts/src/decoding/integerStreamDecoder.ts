@@ -3,6 +3,8 @@ import IntWrapper from "./intWrapper";
 import {
     decodeComponentwiseDeltaVec2,
     decodeComponentwiseDeltaVec2Scaled,
+    decodeComponentwiseDeltaVec3,
+    decodeComponentwiseDeltaVec3Scaled,
     decodeDeltaRleInt32,
     decodeDeltaRleInt64,
     decodeFastPfor,
@@ -43,6 +45,7 @@ import { LogicalLevelTechnique } from "../metadata/tile/logicalLevelTechnique";
 import type { StreamMetadata, RleEncodedStreamMetadata } from "../metadata/tile/streamMetadataDecoder";
 import BitVector from "../vector/flat/bitVector";
 import { VectorType } from "../vector/vectorType";
+import type { CoordinateDimension } from "../vector/geometry/coordinateDimension";
 import type GeometryScaling from "./geometryScaling";
 import { unpackNullable } from "./unpackNullableUtils";
 
@@ -52,9 +55,10 @@ export function decodeSignedInt32Stream(
     streamMetadata: StreamMetadata,
     scalingData?: GeometryScaling,
     nullabilityBuffer?: BitVector,
+    numDimensions: CoordinateDimension = 2,
 ): Int32Array {
     const values = decodePhysicalLevelTechnique(data, offset, streamMetadata);
-    return decodeSignedInt32(values, streamMetadata, scalingData, nullabilityBuffer);
+    return decodeSignedInt32(values, streamMetadata, scalingData, nullabilityBuffer, numDimensions);
 }
 
 export function decodeUnsignedInt32Stream(
@@ -234,6 +238,7 @@ function decodeSignedInt32(
     streamMetadata: StreamMetadata,
     scalingData?: GeometryScaling,
     nullabilityBuffer?: BitVector,
+    numDimensions: CoordinateDimension = 2,
 ): Int32Array {
     let decodedValues: Int32Array;
     switch (streamMetadata.logicalLevelTechnique1) {
@@ -262,9 +267,12 @@ function decodeSignedInt32(
             break;
         case LogicalLevelTechnique.COMPONENTWISE_DELTA:
             if (scalingData && !nullabilityBuffer) {
-                return decodeComponentwiseDeltaVec2Scaled(values, scalingData.scale, scalingData.min, scalingData.max);
+                return numDimensions === 3
+                    ? decodeComponentwiseDeltaVec3Scaled(values, scalingData.scale, scalingData.min, scalingData.max)
+                    : decodeComponentwiseDeltaVec2Scaled(values, scalingData.scale, scalingData.min, scalingData.max);
             }
-            decodedValues = decodeComponentwiseDeltaVec2(values);
+            decodedValues =
+                numDimensions === 3 ? decodeComponentwiseDeltaVec3(values) : decodeComponentwiseDeltaVec2(values);
             break;
         case LogicalLevelTechnique.NONE:
             decodedValues = decodeZigZagInt32(values);

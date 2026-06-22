@@ -1,6 +1,7 @@
 import { GeometryVector, type MortonSettings } from "./geometryVector";
+import type { CoordinateDimension } from "./coordinateDimension";
 import { GEOMETRY_TYPE } from "./geometryType";
-import { VertexBufferType } from "./vertexBufferType";
+import { VertexBufferType, vertexBufferTypeForDimensions } from "./vertexBufferType";
 import type { TopologyVector } from "../../vector/geometry/topologyVector";
 
 export function createFlatGeometryVector(
@@ -8,8 +9,15 @@ export function createFlatGeometryVector(
     topologyVector: TopologyVector,
     vertexOffsets: Uint32Array | undefined,
     vertexBuffer: Int32Array | Uint32Array,
+    numDimensions: CoordinateDimension = 2,
 ): FlatGeometryVector {
-    return new FlatGeometryVector(VertexBufferType.VEC_2, geometryTypes, topologyVector, vertexOffsets, vertexBuffer);
+    return new FlatGeometryVector(
+        vertexBufferTypeForDimensions(numDimensions),
+        geometryTypes,
+        topologyVector,
+        vertexOffsets,
+        vertexBuffer,
+    );
 }
 
 export function createFlatGeometryVectorMortonEncoded(

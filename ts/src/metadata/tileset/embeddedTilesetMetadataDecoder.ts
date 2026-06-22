@@ -5,7 +5,7 @@ import { columnTypeHasChildren, columnTypeHasName, decodeColumnType } from "./ty
 
 const textDecoder = new TextDecoder();
 
-const SUPPORTED_COLUMN_TYPES = "0-3(ID), 4(GEOMETRY), 10-29(scalars), 30(STRUCT)";
+const SUPPORTED_COLUMN_TYPES = "0-3(ID), 4(GEOMETRY), 6(GEOMETRY_Z), 10-29(scalars), 30(STRUCT)";
 const SUPPORTED_FIELD_TYPES = "10-29(scalars), 30(STRUCT)";
 
 /**
@@ -79,10 +79,10 @@ function decodeColumn(src: Uint8Array, offset: IntWrapper): Column {
     if (columnTypeHasName(typeCode)) {
         column.name = decodeString(src, offset);
     } else {
-        // ID and GEOMETRY columns have implicit names
+        // ID and GEOMETRY/GEOMETRY_Z columns have implicit names
         if (typeCode >= 0 && typeCode <= 3) {
             column.name = "id";
-        } else if (typeCode === 4) {
+        } else if (typeCode === 4 || typeCode === 6) {
             column.name = "geometry";
         }
     }

@@ -518,6 +518,38 @@ export function decodeComponentwiseDeltaVec2Scaled(
     return decodedData;
 }
 
+/*
+ * Stride-3 (Vec3 / 3D) variant of the componentwise zigzag-delta decoding.
+ * Each component (x, y, z) is a prefix sum of zigzag-decoded deltas against the
+ * value three positions back. Mirrors mlt-core's stride-aware componentwise delta.
+ */
+export function decodeComponentwiseDeltaVec3(data: Uint32Array): Int32Array {
+    const n = 3;
+    const decodedData = new Int32Array(data.length);
+    const base = Math.min(n, data.length);
+    for (let i = 0; i < base; i++) {
+        decodedData[i] = decodeZigZagInt32Value(data[i]);
+    }
+    for (let i = n; i < data.length; i++) {
+        decodedData[i] = decodeZigZagInt32Value(data[i]) + decodedData[i - n];
+    }
+    return decodedData;
+}
+
+export function decodeComponentwiseDeltaVec3Scaled(
+    data: Uint32Array,
+    scale: number,
+    min: number,
+    max: number,
+): Int32Array {
+    const unscaled = decodeComponentwiseDeltaVec3(data);
+    const decodedData = new Int32Array(unscaled.length);
+    for (let i = 0; i < unscaled.length; i++) {
+        decodedData[i] = clamp(Math.round(unscaled[i] * scale), min, max);
+    }
+    return decodedData;
+}
+
 function clamp(n: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, n));
 }

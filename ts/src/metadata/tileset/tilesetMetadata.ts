@@ -20,6 +20,9 @@ export const ScalarType = {
 export const ComplexType = {
     GEOMETRY: 0,
     STRUCT: 1,
+    // 3D geometry column (interleaved x, y, z vertices). The in-tile analog of the spec's
+    // ComplexType.GEOMETRY_Z. Internal value; the on-wire column-type byte is 6 (see typeMap).
+    GEOMETRY_Z: 2,
 } as const;
 
 export const LogicalScalarType = {

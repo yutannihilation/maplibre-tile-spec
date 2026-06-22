@@ -1,4 +1,5 @@
 import Point from "@mapbox/point-geometry";
+import type { CoordinateDimension } from "./coordinateDimension";
 import { GEOMETRY_TYPE } from "./geometryType";
 import type { CoordinatesArray } from "./geometryVector";
 import type { TopologyVector } from "./topologyVector";
@@ -16,6 +17,11 @@ export abstract class GpuVector implements Iterable<CoordinatesArray> {
     abstract get numGeometries(): number;
 
     abstract containsSingleGeometryType(): boolean;
+
+    /** GPU/tessellated geometry is 2D only (3D + GPU is rejected during decode). */
+    get numDimensions(): CoordinateDimension {
+        return 2;
+    }
 
     get triangleOffsets(): Uint32Array {
         return this._triangleOffsets;

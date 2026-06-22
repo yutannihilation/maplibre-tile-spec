@@ -155,6 +155,7 @@ describe("LINESTRING – sequential vertex buffer, polygon context (uses ringOff
             },
             geometryType: () => GEOMETRY_TYPE.LINESTRING,
             containsPolygonGeometry: () => true,
+            numDimensions: 2,
         } as any as GeometryVector;
 
         const result = convertGeometryVector(gv);
@@ -177,6 +178,7 @@ describe("LINESTRING – VEC_2 dictionary encoded", () => {
             },
             geometryType: () => GEOMETRY_TYPE.LINESTRING,
             containsPolygonGeometry: () => false,
+            numDimensions: 2,
         } as any as GeometryVector;
 
         const result = convertGeometryVector(gv);
@@ -612,6 +614,7 @@ describe("Error handling", () => {
             topologyVector: {},
             geometryType: () => 999 as unknown as GEOMETRY_TYPE,
             containsPolygonGeometry: () => false,
+            numDimensions: 2,
         } as unknown as GeometryVector;
 
         expect(() => convertGeometryVector(gv)).toThrow(

@@ -19,9 +19,20 @@ import { createFlatGeometryVector, createFlatGeometryVectorMortonEncoded } from 
 import { OffsetType } from "../metadata/tile/offsetType";
 import { createConstGpuVector } from "../vector/geometry/constGpuVector";
 import { createFlatGpuVector } from "../vector/geometry/flatGpuVector";
+import type { CoordinateDimension } from "../vector/geometry/coordinateDimension";
 import type { GeometryVector, MortonSettings } from "../vector/geometry/geometryVector";
 import type { GpuVector } from "../vector/geometry/gpuVector";
 import type GeometryScaling from "./geometryScaling";
+
+/**
+ * 3D (`GEOMETRY_Z`) columns only support the plain interleaved Vec3 vertex path, mirroring
+ * mlt-core which never emits Morton/Hilbert dictionaries or tessellation for 3D.
+ */
+function assert2dOnly(numDimensions: CoordinateDimension, feature: string): void {
+    if (numDimensions === 3) {
+        throw new Error(`3D (GEOMETRY_Z) geometry with ${feature} is not supported`);
+    }
+}
 
 // TODO: get rid of numFeatures parameter
 export function decodeGeometryColumn(
@@ -30,6 +41,7 @@ export function decodeGeometryColumn(
     offset: IntWrapper,
     numFeatures: number,
     scalingData?: GeometryScaling,
+    numDimensions: CoordinateDimension = 2,
 ): GeometryVector | GpuVector {
     const geometryTypeMetadata = decodeStreamMetadata(tile, offset);
     const geometryTypesVectorType = getVectorType(geometryTypeMetadata, numFeatures, tile, offset);
@@ -82,8 +94,16 @@ export function decodeGeometryColumn(
                 }
                 case PhysicalStreamType.DATA: {
                     if (DictionaryType.VERTEX === geometryStreamMetadata.logicalStreamType.dictionaryType) {
-                        vertexBuffer = decodeSignedInt32Stream(tile, offset, geometryStreamMetadata, scalingData);
+                        vertexBuffer = decodeSignedInt32Stream(
+                            tile,
+                            offset,
+                            geometryStreamMetadata,
+                            scalingData,
+                            undefined,
+                            numDimensions,
+                        );
                     } else {
+                        assert2dOnly(numDimensions, "Morton-encoded vertices");
                         const mortonMetadata = geometryStreamMetadata as MortonEncodedStreamMetadata;
                         mortonSettings = {
                             numBits: mortonMetadata.numBits,
@@ -97,6 +117,7 @@ export function decodeGeometryColumn(
         }
 
         if (indexBuffer) {
+            assert2dOnly(numDimensions, "pre-tessellated (GPU) vertices");
             if (geometryOffsets !== undefined || partOffsets !== undefined) {
                 /* Case when the indices of a Polygon outline are encoded in the tile */
                 const topologyVector = { geometryOffsets, partOffsets, ringOffsets };
@@ -115,13 +136,13 @@ export function decodeGeometryColumn(
         }
 
         return mortonSettings === undefined
-            ? /* Currently only 2D coordinates (Vec2) are implemented in the encoder  */
-              createConstGeometryVector(
+            ? createConstGeometryVector(
                   numFeatures,
                   geometryType,
                   { geometryOffsets, partOffsets, ringOffsets },
                   vertexOffsets,
                   vertexBuffer,
+                  numDimensions,
               )
             : createMortonEncodedConstGeometryVector(
                   numFeatures,
@@ -174,8 +195,16 @@ export function decodeGeometryColumn(
                 break;
             case PhysicalStreamType.DATA:
                 if (DictionaryType.VERTEX === geometryStreamMetadata.logicalStreamType.dictionaryType) {
-                    vertexBuffer = decodeSignedInt32Stream(tile, offset, geometryStreamMetadata, scalingData);
+                    vertexBuffer = decodeSignedInt32Stream(
+                        tile,
+                        offset,
+                        geometryStreamMetadata,
+                        scalingData,
+                        undefined,
+                        numDimensions,
+                    );
                 } else {
+                    assert2dOnly(numDimensions, "Morton-encoded vertices");
                     const mortonMetadata = geometryStreamMetadata as MortonEncodedStreamMetadata;
                     mortonSettings = {
                         numBits: mortonMetadata.numBits,
@@ -211,11 +240,13 @@ export function decodeGeometryColumn(
     if (indexBuffer && !partOffsets) {
         /* Case when the indices of a Polygon outline are not encoded in the data so no
          *  topology data are present in the tile */
+        assert2dOnly(numDimensions, "pre-tessellated (GPU) vertices");
         return createFlatGpuVector(geometryTypeVector, triangleOffsets, indexBuffer, vertexBuffer);
     }
 
     if (indexBuffer) {
         /* Case when the indices of a Polygon outline are encoded in the tile */
+        assert2dOnly(numDimensions, "pre-tessellated (GPU) vertices");
         return createFlatGpuVector(geometryTypeVector, triangleOffsets, indexBuffer, vertexBuffer, {
             geometryOffsets,
             partOffsets,
@@ -223,12 +254,13 @@ export function decodeGeometryColumn(
         });
     }
 
-    return mortonSettings === undefined /* Currently only 2D coordinates (Vec2) are implemented in the encoder  */
+    return mortonSettings === undefined
         ? createFlatGeometryVector(
               geometryTypeVector,
               { geometryOffsets, partOffsets, ringOffsets },
               vertexOffsets,
               vertexBuffer,
+              numDimensions,
           )
         : createFlatGeometryVectorMortonEncoded(
               geometryTypeVector,

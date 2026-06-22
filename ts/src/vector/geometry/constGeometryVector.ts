@@ -1,6 +1,7 @@
 import { GeometryVector, type MortonSettings } from "./geometryVector";
+import type { CoordinateDimension } from "./coordinateDimension";
 import { GEOMETRY_TYPE } from "./geometryType";
-import { VertexBufferType } from "./vertexBufferType";
+import { VertexBufferType, vertexBufferTypeForDimensions } from "./vertexBufferType";
 import type { TopologyVector } from "../../vector/geometry/topologyVector";
 
 export function createConstGeometryVector(
@@ -9,11 +10,12 @@ export function createConstGeometryVector(
     topologyVector: TopologyVector,
     vertexOffsets: Uint32Array | undefined,
     vertexBuffer: Int32Array | Uint32Array,
+    numDimensions: CoordinateDimension = 2,
 ): ConstGeometryVector {
     return new ConstGeometryVector(
         numGeometries,
         geometryType,
-        VertexBufferType.VEC_2,
+        vertexBufferTypeForDimensions(numDimensions),
         topologyVector,
         vertexOffsets,
         vertexBuffer,

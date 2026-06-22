@@ -1,3 +1,4 @@
+import type { CoordinateDimension } from "../../vector/geometry/coordinateDimension";
 import {
     type Column,
     ColumnScope,
@@ -44,14 +45,15 @@ export function decodeColumnType(typeCode: number): Column | null {
             column.type = "scalarType";
             return column;
         }
-        case 4: {
-            // GEOMETRY (non-nullable, no children)
+        case 4:
+        case 6: {
+            // GEOMETRY (4, 2D) / GEOMETRY_Z (6, 3D) — both non-nullable with no children.
             const column = {} as Column;
             column.nullable = false;
             column.columnScope = ColumnScope.FEATURE;
             const complexCol = {} as ComplexColumn;
             complexCol.type = "physicalType";
-            complexCol.physicalType = ComplexType.GEOMETRY;
+            complexCol.physicalType = typeCode === 6 ? ComplexType.GEOMETRY_Z : ComplexType.GEOMETRY;
             column.type = "complexType";
             column.complexType = complexCol;
             return column;
@@ -75,7 +77,7 @@ export function decodeColumnType(typeCode: number): Column | null {
 
 /**
  * Returns true if this type code requires a name to be stored.
- * ID (0-3) and GEOMETRY (4) columns have implicit names.
+ * ID (0-3) and GEOMETRY/GEOMETRY_Z (4, 6) columns have implicit names.
  * All other types (>= 10) require explicit names.
  */
 export function columnTypeHasName(typeCode: number): boolean {
@@ -127,6 +129,7 @@ export function hasStreamCount(column: Column): boolean {
             const physicalType = complexCol.physicalType;
             switch (physicalType) {
                 case ComplexType.GEOMETRY:
+                case ComplexType.GEOMETRY_Z:
                 case ComplexType.STRUCT:
                     return true;
                 default:
@@ -151,8 +154,21 @@ export function isGeometryColumn(column: Column): boolean {
     return (
         column.type === "complexType" &&
         column.complexType?.type === "physicalType" &&
-        column.complexType.physicalType === ComplexType.GEOMETRY
+        (column.complexType.physicalType === ComplexType.GEOMETRY ||
+            column.complexType.physicalType === ComplexType.GEOMETRY_Z)
     );
+}
+
+/**
+ * Coordinate dimensionality of a geometry column: 3 for GEOMETRY_Z, otherwise 2.
+ * Dimensionality is a per-column property (GEOMETRY vs GEOMETRY_Z), never per-feature.
+ */
+export function geometryColumnDimensions(column: Column): CoordinateDimension {
+    return column.type === "complexType" &&
+        column.complexType?.type === "physicalType" &&
+        column.complexType.physicalType === ComplexType.GEOMETRY_Z
+        ? 3
+        : 2;
 }
 
 /**
