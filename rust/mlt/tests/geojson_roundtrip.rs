@@ -129,7 +129,10 @@ fn mixed_2d_3d_dataset_is_globally_3d() {
 
     let f1 = feature_by_name(features, "origin");
     assert_eq!(f1["id"], Value::Number(1.into()));
-    assert_eq!(coords(f1), &vec![json_i(2048), json_i(2048), json_i(102)]);
+    assert_eq!(
+        coords(f1),
+        &vec![json_i(2048), json_i(2048), json_i(100_000_000)]
+    );
     assert_eq!(f1["properties"]["rank"], Value::Number(5.into()));
     assert_eq!(f1["properties"]["score"], json_f(3.5));
     assert_eq!(f1["properties"]["active"], Value::Bool(true));
@@ -141,7 +144,7 @@ fn mixed_2d_3d_dataset_is_globally_3d() {
     let c2 = coords(f2);
     assert_eq!(
         c2[0],
-        Value::Array(vec![json_i(2048), json_i(2048), json_i(102)])
+        Value::Array(vec![json_i(2048), json_i(2048), json_i(100_000_000)])
     );
     assert_eq!(
         c2[1],
@@ -209,7 +212,10 @@ fn regression_2d_first_then_3d_keeps_z() {
     assert_eq!(coords(flat), &vec![json_i(2048), json_i(2048), json_i(0)]);
 
     let high = feature_by_name(features, "high");
-    assert_eq!(coords(high), &vec![json_i(2048), json_i(1189), json_i(102)]);
+    assert_eq!(
+        coords(high),
+        &vec![json_i(2048), json_i(1189), json_i(100_000_000)]
+    );
 }
 
 #[test]
@@ -296,7 +302,7 @@ fn multipoint_3d_round_trips() {
     let c = coords(mp);
     assert_eq!(
         c[0],
-        Value::Array(vec![json_i(2048), json_i(2048), json_i(102)])
+        Value::Array(vec![json_i(2048), json_i(2048), json_i(100_000_000)])
     );
     assert_eq!(
         c[1],

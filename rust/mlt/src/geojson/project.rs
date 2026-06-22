@@ -10,15 +10,26 @@ use mlt_core::wkt::types::Coord;
 /// `wgs84_to_webmercator` never produces infinities at the poles.
 const MAX_LAT: f64 = 85.051_128_779_806_59;
 
+/// Fixed vertical resolution for 3D Z: one Z grid unit is 1 cm. Z is stored as
+/// `round(alt / Z_SCALE_METERS)` (centimeters) and recovered as
+/// `alt = z * Z_SCALE_METERS`. Unlike X/Y, this is independent of zoom/extent.
+///
+/// WARNING: this 0.01 m Z scale is **NOT defined by the MLT specification**. The
+/// spec assigns no unit to Z; `0.01` is an internal convention chosen by this
+/// project. It is **not** carried in the tile, so a decoder cannot discover it —
+/// every decoder that reads these tiles must hard-code the *same* `0.01` value
+/// to recover meters. Keep this constant and all decoders in sync by hand;
+/// changing it here silently corrupts elevations for every existing tile.
+pub(super) const Z_SCALE_METERS: f64 = 0.01;
+
 /// Project a single WGS84 position into the tile-local integer grid of tile
 /// `(zoom, col, row)` with the given `extent`.
 ///
 /// X/Y use the standard slippy-map transform (Y is flipped so the tile origin is
-/// top-left). When the layer is 3D (`dim_xyz`), Z is encoded with the **same**
-/// tile-grid scale as X/Y — `round(alt * extent / tile_len)` — with no origin
-/// offset and no `cos(lat)` correction (Option A: self-describing, consistent
-/// inverse transform for all three axes). When the layer is 2D, the Z coordinate
-/// is `None`.
+/// top-left). When the layer is 3D (`dim_xyz`), Z is the altitude quantized to a
+/// fixed 1 cm grid — `round(alt / Z_SCALE_METERS)` — independent of zoom and
+/// extent, so elevations are consistent across zoom levels and recovered simply
+/// as `z * Z_SCALE_METERS`. When the layer is 2D, the Z coordinate is `None`.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "projected grid coordinates are bounded by realistic extents/zooms and rounded before casting; \
@@ -51,7 +62,7 @@ pub(super) fn tile_local(
     let y = ((max_y - wmy) / tile_len * extent).round() as i32;
 
     let z = if dim_xyz {
-        Some(alt.map_or(0, |a| (a * extent / tile_len).round() as i32))
+        Some(alt.map_or(0, |a| (a / Z_SCALE_METERS).round() as i32))
     } else {
         None
     };
@@ -94,7 +105,7 @@ mod tests {
 
     #[test]
     fn white_house_z14() {
-        // tile_len @ z14 = 2445.984905; z = round(100 * 4096 / 2445.984905) = round(167.498) = 167.
+        // X/Y use the slippy transform; Z is centimeters: round(100 / 0.01) = 10000.
         let c = tile_local(
             -77.036_560,
             38.897_957,
@@ -107,27 +118,38 @@ mod tests {
         );
         assert_eq!(c.x, 4016);
         assert_eq!(c.y, 2438);
-        assert_eq!(c.z, Some(167));
+        assert_eq!(c.z, Some(10000));
     }
 
     #[test]
-    fn z_uses_same_scale_as_xy() {
-        // alt == tile_len -> exactly `extent`; alt == tile_len/4 -> extent/4.
-        let tile_len_z14 = 2_445.984_905;
-        let c = tile_local(0.0, 0.0, Some(tile_len_z14), 14, 0, 0, 4096, true);
-        assert_eq!(c.z, Some(4096));
-        let c = tile_local(0.0, 0.0, Some(tile_len_z14 / 4.0), 14, 0, 0, 4096, true);
-        assert_eq!(c.z, Some(1024));
+    fn z_uses_fixed_centimeter_scale() {
+        // Z is centimeters: round(alt / 0.01), independent of zoom/extent.
+        assert_eq!(
+            tile_local(0.0, 0.0, Some(100.0), 14, 0, 0, 4096, true).z,
+            Some(10000)
+        );
+        assert_eq!(
+            tile_local(0.0, 0.0, Some(0.01), 14, 0, 0, 4096, true).z,
+            Some(1)
+        );
+        assert_eq!(
+            tile_local(0.0, 0.0, Some(61.01), 14, 0, 0, 4096, true).z,
+            Some(6101)
+        );
+        // Below-sea-level altitudes round to negative grid units.
+        assert_eq!(
+            tile_local(0.0, 0.0, Some(-5.0), 14, 0, 0, 4096, true).z,
+            Some(-500)
+        );
     }
 
     #[test]
-    fn z_is_coarse_at_low_zoom() {
-        // At z0 the tile spans the whole world, so 100 m rounds to 0 grid units.
-        let c = tile_local(0.0, 0.0, Some(100.0), 0, 0, 0, 4096, true);
-        assert_eq!(c.z, Some(0));
-        // A megameter of altitude is resolvable even at z0.
-        let c = tile_local(0.0, 0.0, Some(1_000_000.0), 0, 0, 0, 4096, true);
-        assert_eq!(c.z, Some(102));
+    fn z_is_zoom_independent() {
+        // Unlike X/Y, the same altitude yields the same Z grid value at every zoom.
+        let z0 = tile_local(0.0, 0.0, Some(123.45), 0, 0, 0, 4096, true).z;
+        let z14 = tile_local(0.0, 0.0, Some(123.45), 14, 0, 0, 4096, true).z;
+        assert_eq!(z0, Some(12345));
+        assert_eq!(z0, z14);
     }
 
     #[test]
