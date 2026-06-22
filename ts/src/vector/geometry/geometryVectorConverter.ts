@@ -9,10 +9,28 @@ type AnyPoint = Point | PointZ;
 /** One geometry's coordinates: rings/parts of `AnyPoint`. Uniform per column (all 2D or all 3D). */
 type AnyCoordinatesArray = Array<Array<AnyPoint>>;
 
-/** Build a vertex from the interleaved buffer at `offset`, including Z when `stride` is 3. */
+/**
+ * Fixed vertical resolution for 3D Z: one stored Z grid unit is 1 cm, so the
+ * decoded altitude in meters is `z_grid * Z_SCALE_METERS`. X/Y stay in tile-grid
+ * units; only Z is converted to meters.
+ *
+ * WARNING: this 0.01 m Z scale is NOT defined by the MLT specification. The spec
+ * assigns no unit to Z; 0.01 is an internal convention shared with the `mlt
+ * geojson` encoder (rust/mlt/src/geojson/project.rs, `Z_SCALE_METERS`). It is
+ * not carried in the tile, so this value MUST be kept identical to the encoder's
+ * by hand — changing one side silently corrupts every decoded elevation.
+ */
+const Z_SCALE_METERS = 0.01;
+
+/** Build a vertex from the interleaved buffer at `offset`, including Z (scaled to
+ * meters) when `stride` is 3. */
 function makePoint(buffer: Int32Array | Uint32Array, offset: number, stride: number): AnyPoint {
     return stride === 3
-        ? ({ x: buffer[offset], y: buffer[offset + 1], z: buffer[offset + 2] } satisfies PointZ)
+        ? ({
+              x: buffer[offset],
+              y: buffer[offset + 1],
+              z: buffer[offset + 2] * Z_SCALE_METERS,
+          } satisfies PointZ)
         : new Point(buffer[offset], buffer[offset + 1]);
 }
 

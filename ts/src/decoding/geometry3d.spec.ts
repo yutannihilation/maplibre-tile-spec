@@ -33,6 +33,11 @@ function geometry3d(name: string): GeometryZ {
 
 const xyz = (p: PointZ): number[] => [p.x, p.y, p.z];
 
+// Stored Z is centimeters; the decoder returns meters (z_grid * 0.01). Expected
+// Z values are written as `<grid> * 0.01` so they match the decoder's exact
+// IEEE result (e.g. 30 * 0.01 === 0.30000000000000004).
+const M = 0.01;
+
 describe("MLT Decoder - 3D (GeometryZ)", () => {
     it("decodes every layer as 3D", () => {
         for (const table of decode()) {
@@ -43,16 +48,16 @@ describe("MLT Decoder - 3D (GeometryZ)", () => {
     it("decodes a 3D Point", () => {
         const geom = geometry3d("point_z");
         expect(geom.type).toBe(GEOMETRY_TYPE.POINT);
-        expect(xyz(geom.coordinates[0][0])).toEqual([10, 20, 30]);
+        expect(xyz(geom.coordinates[0][0])).toEqual([10, 20, 30 * M]);
     });
 
     it("decodes a 3D LineString", () => {
         const geom = geometry3d("linestring_z");
         expect(geom.type).toBe(GEOMETRY_TYPE.LINESTRING);
         expect(geom.coordinates[0].map(xyz)).toEqual([
-            [1, 2, 3],
-            [4, 5, 6],
-            [7, 8, 9],
+            [1, 2, 3 * M],
+            [4, 5, 6 * M],
+            [7, 8, 9 * M],
         ]);
     });
 
@@ -60,11 +65,11 @@ describe("MLT Decoder - 3D (GeometryZ)", () => {
         const geom = geometry3d("polygon_z");
         expect(geom.type).toBe(GEOMETRY_TYPE.POLYGON);
         expect(geom.coordinates[0].map(xyz)).toEqual([
-            [0, 0, 1],
-            [10, 0, 2],
-            [10, 10, 3],
-            [0, 10, 4],
-            [0, 0, 1],
+            [0, 0, 1 * M],
+            [10, 0, 2 * M],
+            [10, 10, 3 * M],
+            [0, 10, 4 * M],
+            [0, 0, 1 * M],
         ]);
     });
 
@@ -72,8 +77,8 @@ describe("MLT Decoder - 3D (GeometryZ)", () => {
         const geom = geometry3d("multipoint_z");
         expect(geom.type).toBe(GEOMETRY_TYPE.MULTIPOINT);
         expect(geom.coordinates.map((part) => xyz(part[0]))).toEqual([
-            [1, 2, 3],
-            [4, 5, 6],
+            [1, 2, 3 * M],
+            [4, 5, 6 * M],
         ]);
     });
 });
