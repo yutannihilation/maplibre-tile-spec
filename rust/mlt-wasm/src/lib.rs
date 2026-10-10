@@ -27,6 +27,12 @@
 //! any feature's property with a single array index - zero WASM calls during
 //! traversal.
 //!
+//! ## Columns
+//!
+//! `decodeTileColumns` hands every layer to JS as typed arrays in one call, read straight
+//! off `mlt-core`'s decoded columns rather than per-feature rows. No WASM object is kept
+//! alive, so nothing needs freeing.
+//!
 //! ## Annotate
 //!
 //! `annotateTile` is the other entry point: it walks a tile into an `AnnotatedTile`
@@ -34,6 +40,7 @@
 //! decoded tile.
 
 mod annotate;
+mod columns;
 #[cfg(feature = "coverage")]
 mod coverage;
 mod geometry;
