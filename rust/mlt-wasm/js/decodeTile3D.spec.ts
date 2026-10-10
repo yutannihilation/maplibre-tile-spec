@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { getTestCases } from "../../../test/synthetic/synthetic-test-utils";
+import { MltGeometryType } from "./columns";
 import {
   decodeTile,
   decodeTile3D,
   type MltFeature3D,
-  MltGeometryType,
   type MltLayer,
   type MltLayer3D,
 } from "./vectorTile";
