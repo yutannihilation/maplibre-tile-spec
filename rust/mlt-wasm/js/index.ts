@@ -44,8 +44,11 @@ export { tileGeoJson } from "./geojson";
 export {
   decodeTile,
   decodeTile3D,
+  type MltFeature,
   type MltFeature3D,
+  type MltLayer,
   type MltLayer3D,
+  type MltTile,
   type MltTile3D,
   type Position3D,
 } from "./vectorTile";

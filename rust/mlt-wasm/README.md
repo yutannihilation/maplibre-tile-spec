@@ -14,7 +14,7 @@ mlt-wasm/
 │   ├── wasm.ts        # the one module that imports pkg/
 │   ├── annotate.ts    # annotated-dump wire contract
 │   ├── columns.ts     # typed-array layers, as decoded
-│   └── vectorTile.ts  # VectorTileLike wrapper
+│   └── vectorTile.ts  # VectorTileLike wrapper over columns.ts
 ├── pkg/               # wasm-pack output (gitignored)
 ├── dist/              # tsc output (gitignored)
 ├── Cargo.toml
@@ -53,7 +53,7 @@ for (const [name, layer] of Object.entries(tile.layers)) {
         const feature = layer.feature(i);
         console.log(feature.type);           // 1 | 2 | 3
         console.log(feature.id);             // number | undefined
-        console.log(feature.properties);     // fetched lazily from WASM
+        console.log(feature.properties);     // read from the decoded columns
         console.log(feature.loadGeometry()); // Point[][]
     }
 }
