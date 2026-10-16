@@ -2,7 +2,12 @@
 
 use std::borrow::Borrow;
 
-use fast_mvt::{MvtTileBuilder, MvtValueRef};
+use fast_mvt::{MvtFeatureBuilder, MvtGeomType, MvtLayerBuilder, MvtTileBuilder, MvtValueRef};
+use geo_traits::{
+    GeometryTrait, GeometryType as GeoKind, LineStringTrait, MultiLineStringTrait, MultiPointTrait,
+    MultiPolygonTrait, PointTrait, PolygonTrait,
+};
+use geo_types::Coord;
 
 use crate::encoder::LayerSource;
 use crate::tile::TileLayer;
@@ -42,6 +47,72 @@ pub(crate) fn write_mvt_layer(
     Ok(layer.end())
 }
 
+/// Starts a feature of `geometry` in `layer`, with its geometry written.
+///
+/// Rings go in as stored, closing vertex or not: the MVT writer closes them itself.
+pub(crate) fn mvt_feature_of(
+    geometry: &impl GeometryTrait<T = i32>,
+    layer: MvtLayerBuilder,
+) -> MltResult<MvtFeatureBuilder> {
+    fn xy(c: &impl geo_traits::CoordTrait<T = i32>) -> Coord<i32> {
+        Coord { x: c.x(), y: c.y() }
+    }
+    fn line(l: &impl LineStringTrait<T = i32>) -> impl Iterator<Item = Coord<i32>> + '_ {
+        l.coords().map(|c| xy(&c))
+    }
+    fn polygon(out: &mut MvtFeatureBuilder, p: &impl PolygonTrait<T = i32>) -> MltResult<()> {
+        if let Some(exterior) = p.exterior() {
+            out.ring(line(&exterior), true)?;
+        }
+        for interior in p.interiors() {
+            out.ring(line(&interior), false)?;
+        }
+        Ok(())
+    }
+    Ok(match geometry.as_type() {
+        GeoKind::Point(p) => {
+            let mut out = layer.feature_of(MvtGeomType::Point);
+            out.points(p.coord().map(|c| xy(&c)))?;
+            out
+        }
+        GeoKind::MultiPoint(mp) => {
+            let mut out = layer.feature_of(MvtGeomType::Point);
+            out.points(mp.points().filter_map(|p| p.coord().map(|c| xy(&c))))?;
+            out
+        }
+        GeoKind::LineString(l) => {
+            let mut out = layer.feature_of(MvtGeomType::LineString);
+            out.line(line(l))?;
+            out
+        }
+        GeoKind::MultiLineString(mls) => {
+            let mut out = layer.feature_of(MvtGeomType::LineString);
+            for l in mls.line_strings() {
+                out.line(line(&l))?;
+            }
+            out
+        }
+        GeoKind::Polygon(p) => {
+            let mut out = layer.feature_of(MvtGeomType::Polygon);
+            polygon(&mut out, p)?;
+            out
+        }
+        GeoKind::MultiPolygon(mp) => {
+            let mut out = layer.feature_of(MvtGeomType::Polygon);
+            for p in mp.polygons() {
+                polygon(&mut out, &p)?;
+            }
+            out
+        }
+        GeoKind::GeometryCollection(_)
+        | GeoKind::Rect(_)
+        | GeoKind::Triangle(_)
+        | GeoKind::Line(_) => {
+            return Err(MltError::GeometryCollectionUnsupported);
+        }
+    })
+}
+
 impl<'a> From<PropValueRef<'a>> for MvtValueRef<'a> {
     fn from(value: PropValueRef<'a>) -> Self {
         match value {
@@ -62,8 +133,10 @@ impl<'a> From<PropValueRef<'a>> for MvtValueRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FeatureGeometry;
     use crate::mvt::mvt_to_tile_layers;
     use crate::tile::{Extent, TileFeature};
+    use geo_traits::to_geo::ToGeoGeometry as _;
 
     #[test]
     fn empty_input_yields_empty_output() {
@@ -116,24 +189,24 @@ mod tests {
             vec![],
             vec![TileFeature {
                 id: Some(1),
-                geometry: Geometry::Polygon(Polygon::new(LineString(ring), vec![])),
+                geometry: FeatureGeometry::from_geometry(&Geometry::Polygon(Polygon::new(
+                    LineString(ring),
+                    vec![],
+                )))
+                .unwrap(),
                 properties: vec![],
                 #[cfg(feature = "unstable-v2")]
                 m_values: vec![],
                 #[cfg(feature = "unstable-v2")]
                 nested: vec![],
-                #[cfg(feature = "unstable-v2")]
-                z: Vec::new(),
             }],
         )
         .unwrap();
         let bytes = tile_layers_to_mvt(vec![layer]).unwrap();
         let back = mvt_to_tile_layers(bytes).unwrap();
-        let Geometry::Polygon(p) = back[0].features()[0].geometry() else {
-            panic!(
-                "expected polygon, got {:?}",
-                back[0].features()[0].geometry()
-            );
+        let geometry = back[0].features()[0].geometry().to_geometry();
+        let Geometry::Polygon(p) = geometry else {
+            panic!("expected polygon, got {geometry:?}");
         };
         assert_eq!(p.exterior().0.len(), 5);
         assert_eq!(p.exterior().0.first(), p.exterior().0.last());

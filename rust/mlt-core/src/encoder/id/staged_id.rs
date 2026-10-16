@@ -213,7 +213,9 @@ mod tests {
         let n = feature_count(decoded);
         let mut geometry = GeometryValues::default();
         for _ in 0..n {
-            geometry.push_geom(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)));
+            geometry
+                .push_geometry(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)))
+                .unwrap();
         }
         let staged =
             StagedLayer::new("id_roundtrip", 4096, decoded.clone(), geometry, vec![]).unwrap();
@@ -240,7 +242,9 @@ mod tests {
         let n = feature_count(decoded);
         let mut geometry = GeometryValues::default();
         for _ in 0..n {
-            geometry.push_geom(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)));
+            geometry
+                .push_geometry(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)))
+                .unwrap();
         }
         let staged =
             StagedLayer::new("id_roundtrip", 4096, decoded.clone(), geometry, vec![]).unwrap();
@@ -565,7 +569,9 @@ mod tests {
         let n = feature_count(decoded);
         let mut geometry = GeometryValues::default();
         for _ in 0..n {
-            geometry.push_geom(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)));
+            geometry
+                .push_geometry(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)))
+                .unwrap();
         }
         let staged = StagedLayer::new("id_roundtrip", 4096, decoded.clone(), geometry, vec![])?;
         let enc =
@@ -599,7 +605,9 @@ mod tests {
         let n = feature_count(ids);
         let mut geometry = GeometryValues::default();
         for _ in 0..n {
-            geometry.push_geom(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)));
+            geometry
+                .push_geometry(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)))
+                .unwrap();
         }
         let staged = StagedLayer::new("id_test", 4096, ids.clone(), geometry, vec![]).unwrap();
         let enc =

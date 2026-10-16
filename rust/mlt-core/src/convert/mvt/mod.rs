@@ -3,7 +3,8 @@
 
 mod decode;
 mod encode;
+mod geometry;
 
 pub use decode::{mvt_to_feature_collection, mvt_to_tile_layers};
 pub use encode::tile_layers_to_mvt;
-pub(crate) use encode::write_mvt_layer;
+pub(crate) use encode::{mvt_feature_of, write_mvt_layer};

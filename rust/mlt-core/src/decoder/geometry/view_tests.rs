@@ -4,8 +4,8 @@
 
 use geo_types::{Coord, Geometry, LineString, Point};
 
-use crate::MltError;
 use crate::decoder::{GeometryType, GeometryValues};
+use crate::{FeatureGeometry, MltError};
 
 fn line(from: i32, n: i32) -> Geometry<i32> {
     Geometry::LineString(LineString(
@@ -16,14 +16,14 @@ fn line(from: i32, n: i32) -> Geometry<i32> {
 /// Two line strings of 3 and 2 vertices: `part_offsets == [0, 3, 5]`.
 fn lines() -> GeometryValues {
     GeometryValues::default()
-        .with_geom(&line(0, 3))
-        .with_geom(&line(10, 2))
+        .with_geom(&FeatureGeometry::from_geometry(&line(0, 3)).unwrap())
+        .with_geom(&FeatureGeometry::from_geometry(&line(10, 2)).unwrap())
 }
 
 fn points() -> GeometryValues {
     GeometryValues::default()
-        .with_geom(&Geometry::Point(Point::new(1, 2)))
-        .with_geom(&Geometry::Point(Point::new(3, 4)))
+        .with_geom(&FeatureGeometry::from_geometry(&Geometry::Point(Point::new(1, 2))).unwrap())
+        .with_geom(&FeatureGeometry::from_geometry(&Geometry::Point(Point::new(3, 4))).unwrap())
 }
 
 /// Both paths must agree on what is wrong with the feature.

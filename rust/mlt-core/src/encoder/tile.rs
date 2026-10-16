@@ -87,28 +87,16 @@ pub(crate) fn stage_layer(
     } else {
         GeometryValues::default()
     };
+    #[cfg(feature = "unstable-v2")]
+    if let Some(step) = source.v2_layout().z_step {
+        geometry = geometry.with_z_step(step);
+    }
     geometry.reserve(
         source.feature_count(),
         order.iter().map(|f| source.coord_count(f)).sum(),
     );
     for f in order.iter() {
         source.push_geometry(f, &mut geometry);
-    }
-    #[cfg(feature = "unstable-v2")]
-    if let Some(step) = source.v2_layout().z_step {
-        let mut z = Vec::new();
-        for f in order.iter() {
-            let feature_z = source.z(f);
-            match source.vertex_order(f) {
-                Some(moved) if moved.len() == feature_z.len() => {
-                    z.extend(moved.iter().map(|&i| feature_z[i]));
-                }
-                _ => z.extend_from_slice(feature_z),
-            }
-        }
-        geometry
-            .add_z(step, &z)
-            .expect("the source holds one z per stored vertex");
     }
 
     let id = StagedId::from_optional_with_presence(
@@ -475,8 +463,10 @@ mod tests {
 
     fn two_points() -> GeometryValues {
         let mut g = GeometryValues::default();
-        g.push_geom(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)));
-        g.push_geom(&geo_types::Geometry::<i32>::Point(Point::new(1, 1)));
+        g.push_geometry(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)))
+            .unwrap();
+        g.push_geometry(&geo_types::Geometry::<i32>::Point(Point::new(1, 1)))
+            .unwrap();
         g
     }
 

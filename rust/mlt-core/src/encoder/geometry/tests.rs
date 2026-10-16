@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+#[cfg(feature = "unstable-v2")]
+use geo_traits::to_geo::ToGeoGeometry as _;
 use geo_types::{Coord, Geometry, LineString, Point, Polygon, point, wkt};
 use insta::assert_debug_snapshot;
 use pretty_assertions::assert_eq;
@@ -169,7 +171,10 @@ fn forced_vertex_strategy_streams(
 /// Multipoint with repeated coordinates so dict paths actually dedup.
 fn repeated_multipoint() -> GeometryValues {
     let mut g = GeometryValues::default();
-    g.push_geom(&wkt!(MULTIPOINT(5 5, 10 10, 5 5, 10 10, 0 0, 5 5)).into());
+    g.push_geometry(&Geometry::<i32>::from(
+        wkt!(MULTIPOINT(5 5, 10 10, 5 5, 10 10, 0 0, 5 5)),
+    ))
+    .unwrap();
     g
 }
 
@@ -265,7 +270,7 @@ fn assert_geometry_roundtrip(data: &[u8], expected: &GeometryValues) {
 fn push_geoms(geoms: &[Geometry<i32>]) -> GeometryValues {
     let mut d = GeometryValues::default();
     for g in geoms {
-        d.push_geom(g);
+        d.push_geometry(g).unwrap();
     }
     d
 }
@@ -273,7 +278,7 @@ fn push_geoms(geoms: &[Geometry<i32>]) -> GeometryValues {
 fn push_geoms_tessellated(geoms: &[Geometry<i32>]) -> GeometryValues {
     let mut d = GeometryValues::new_tessellated();
     for g in geoms {
-        d.push_geom(g);
+        d.push_geometry(g).unwrap();
     }
     d
 }
@@ -497,7 +502,11 @@ mod v2 {
     ) {
         let decoded = stage(&geoms, tessellate);
         let layer = forced_layer(&decoded, strategy, WireVersion::V02);
-        let read_back: Vec<_> = layer.features.into_iter().map(|f| f.geometry).collect();
+        let read_back: Vec<_> = layer
+            .features
+            .into_iter()
+            .map(|f| f.geometry.to_geometry())
+            .collect();
         assert_eq!(read_back, geoms);
     }
 

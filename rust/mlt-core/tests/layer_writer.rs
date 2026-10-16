@@ -4,11 +4,15 @@
 use std::fs;
 use std::path::Path;
 
-use geo_types::{Geometry, Polygon};
+use geo_types::Coord;
 use mlt_core::encoder::EncoderConfig;
 use mlt_core::fast_mvt::MvtTileBuilder;
+use mlt_core::geo_traits::{
+    CoordTrait, GeometryTrait, GeometryType as GeoKind, LineStringTrait, MultiLineStringTrait,
+    MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+};
 use mlt_core::mvt::{mvt_to_tile_layers, tile_layers_to_mvt};
-use mlt_core::{FeatureWriter, GeometryType, LayerWriter, MltResult, TileLayer};
+use mlt_core::{FeatureWriter, LayerWriter, MltResult, TileLayer};
 use test_each_file::test_each_path;
 
 test_each_path! { for ["mvt"] in "../test/fixtures" as fixtures => writer_encodes_like_tile_layer }
@@ -52,34 +56,33 @@ fn write(layer: &TileLayer) -> MltResult<LayerWriter<'_>> {
         .collect::<MltResult<Vec<_>>>()?;
     for feature in layer.features() {
         let geometry = feature.geometry();
-        let geometry_type = GeometryType::try_from(geometry).expect("a single geometry kind");
-        let mut out = writer.feature(geometry_type);
+        let mut out = writer.feature(geometry.geometry_type());
         out.id(feature.id());
-        match geometry {
-            Geometry::Point(p) => {
-                out.points([p.0])?;
+        match geometry.as_type() {
+            GeoKind::Point(p) => {
+                out.points(PointTrait::coord(p).map(Coord::from))?;
             }
-            Geometry::MultiPoint(mp) => {
-                out.points(mp.0.iter().map(|p| p.0))?;
+            GeoKind::MultiPoint(mp) => {
+                out.points(mp.points().filter_map(|p| p.coord().map(Coord::from)))?;
             }
-            Geometry::LineString(ls) => {
-                out.line(ls.0.iter().copied())?;
+            GeoKind::LineString(ls) => {
+                out.line(LineStringTrait::coords(ls).map(Coord::from))?;
             }
-            Geometry::MultiLineString(mls) => {
-                for ls in &mls.0 {
-                    out.line(ls.0.iter().copied())?;
+            GeoKind::MultiLineString(mls) => {
+                for ls in mls.line_strings() {
+                    out.line(ls.coords().map(Coord::from))?;
                 }
             }
-            Geometry::Polygon(p) => rings(&mut out, p)?,
-            Geometry::MultiPolygon(mp) => {
-                for p in &mp.0 {
-                    rings(&mut out, p)?;
+            GeoKind::Polygon(p) => rings(&mut out, p)?,
+            GeoKind::MultiPolygon(mp) => {
+                for p in mp.polygons() {
+                    rings(&mut out, &p)?;
                 }
             }
-            Geometry::Line(_)
-            | Geometry::GeometryCollection(_)
-            | Geometry::Rect(_)
-            | Geometry::Triangle(_) => {}
+            GeoKind::Line(_)
+            | GeoKind::GeometryCollection(_)
+            | GeoKind::Rect(_)
+            | GeoKind::Triangle(_) => unreachable!("a feature geometry is one of the six kinds"),
         }
         for (&key, value) in keys.iter().zip(feature.properties()) {
             if let Some(value) = value.value_ref() {
@@ -91,10 +94,20 @@ fn write(layer: &TileLayer) -> MltResult<LayerWriter<'_>> {
     Ok(writer)
 }
 
-fn rings(out: &mut FeatureWriter<'_, '_>, polygon: &Polygon<i32>) -> MltResult<()> {
-    out.exterior_ring(polygon.exterior().0.iter().copied())?;
+fn xy(c: &impl CoordTrait<T = i32>) -> Coord<i32> {
+    Coord { x: c.x(), y: c.y() }
+}
+
+/// The polygon's rings as the writer takes them: an exterior, open or closed, then holes.
+fn rings(out: &mut FeatureWriter<'_, '_>, polygon: &impl PolygonTrait<T = i32>) -> MltResult<()> {
+    let exterior: Vec<Coord<i32>> = polygon
+        .exterior()
+        .into_iter()
+        .flat_map(|e| e.coords().map(|c| xy(&c)).collect::<Vec<_>>())
+        .collect();
+    out.exterior_ring(exterior)?;
     for hole in polygon.interiors() {
-        out.hole(hole.0.iter().copied())?;
+        out.hole(hole.coords().map(|c| xy(&c)))?;
     }
     Ok(())
 }

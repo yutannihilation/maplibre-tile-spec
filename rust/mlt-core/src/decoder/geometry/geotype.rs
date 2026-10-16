@@ -4,11 +4,9 @@ use geo_traits::to_geo::ToGeoGeometry as _;
 use geo_types::Geometry;
 use usize_cast::IntoUsize as _;
 
-use crate::MltError::{
-    GeometryIndexOutOfBounds, GeometryOutOfBounds, GeometryVertexOutOfBounds, IntegerOverflow,
-};
+use crate::MltError::{GeometryIndexOutOfBounds, GeometryOutOfBounds, IntegerOverflow};
 #[cfg(feature = "unstable-v2")]
-use crate::MltError::{ZAlreadySet, ZVertexCountMismatch};
+use crate::MltError::{GeometryVertexOutOfBounds, ZAlreadySet, ZVertexCountMismatch};
 use crate::MltResult;
 use crate::decoder::{GeometryType, GeometryValues};
 use crate::errors::AsMltError as _;

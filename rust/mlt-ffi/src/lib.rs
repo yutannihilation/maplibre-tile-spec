@@ -547,7 +547,6 @@ mod tests {
                         ],
                         m_values: [],
                         nested: [],
-                        z: [],
                     },
                 ],
             },
@@ -616,7 +615,6 @@ mod tests {
                 ],
                 m_values: [],
                 nested: [],
-                z: [],
             },
         ]
         "#);
@@ -763,7 +761,6 @@ mod tests {
                 ],
                 m_values: [],
                 nested: [],
-                z: [],
             },
             TileFeature {
                 id: None,
@@ -777,7 +774,6 @@ mod tests {
                 ],
                 m_values: [],
                 nested: [],
-                z: [],
             },
         ]
         ");
@@ -816,7 +812,6 @@ mod tests {
                 ],
                 m_values: [],
                 nested: [],
-                z: [],
             },
             TileFeature {
                 id: None,
@@ -830,7 +825,6 @@ mod tests {
                 ],
                 m_values: [],
                 nested: [],
-                z: [],
             },
         ]
         "#);
@@ -927,7 +921,6 @@ mod tests {
                 properties: [],
                 m_values: [],
                 nested: [],
-                z: [],
             },
         ]
         ");
@@ -960,7 +953,6 @@ mod tests {
                 properties: [],
                 m_values: [],
                 nested: [],
-                z: [],
             },
             TileFeature {
                 id: None,
@@ -968,7 +960,6 @@ mod tests {
                 properties: [],
                 m_values: [],
                 nested: [],
-                z: [],
             },
             TileFeature {
                 id: None,
@@ -976,7 +967,6 @@ mod tests {
                 properties: [],
                 m_values: [],
                 nested: [],
-                z: [],
             },
         ]
         ");
@@ -998,7 +988,6 @@ mod tests {
                 properties: [],
                 m_values: [],
                 nested: [],
-                z: [],
             },
         ]
         ");

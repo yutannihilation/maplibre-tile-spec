@@ -11,7 +11,8 @@ use mlt_core::encoder::{EncoderConfig, WireVersion};
 use mlt_core::geo_types::{Geometry, LineString, Point};
 use mlt_core::mvt::tile_layers_to_mvt;
 use mlt_core::{
-    Decoder, MValue, NestedKind, NestedValue, Parser, PropKind, PropValue, TileLayer, ZStep,
+    Decoder, FeatureGeometry, MValue, NestedKind, NestedValue, Parser, PropKind, PropValue,
+    TileLayer, ZStep,
 };
 
 #[test]
@@ -130,7 +131,8 @@ fn z_and_unparsed_properties_are_kept() {
     .unwrap();
     let feature = &out.features()[0];
     assert_eq!(out.z_step(), Some(ZStep::new(0).unwrap()));
-    assert_eq!(feature.z(), [100, 101]);
+    let z: Vec<i32> = feature.geometry().z().unwrap().collect();
+    assert_eq!(z, [100, 101]);
     assert_eq!(out.property_names(), ["name"]);
     assert_eq!(
         feature.properties(),
@@ -264,7 +266,9 @@ fn a_configured_field_that_is_already_a_nested_column_is_rejected() {
     let f = layer
         .add_nested("f", NestedKind::list(NestedKind::Leaf(PropKind::U64)))
         .unwrap();
-    let mut row = layer.feature(Geometry::from(LineString::from(vec![(0, 0), (1, 0)])));
+    let mut row = layer
+        .feature(Geometry::from(LineString::from(vec![(0, 0), (1, 0)])))
+        .unwrap();
     row.nested(
         f,
         NestedValue::list([NestedValue::Leaf(PropValue::U64(Some(5)))]),
@@ -571,7 +575,9 @@ fn existing_m_values_and_nested_columns_are_kept() {
             NestedKind::map([("k", NestedKind::Leaf(PropKind::Str))]),
         )
         .unwrap();
-    let mut row = layer.feature(Geometry::from(LineString::from(vec![(0, 0), (1, 0)])));
+    let mut row = layer
+        .feature(Geometry::from(LineString::from(vec![(0, 0), (1, 0)])))
+        .unwrap();
     row.property(f, PropValue::Str(Some("5,6".into()))).unwrap();
     row.m_value(m, MValue::I32(Some(vec![-1, 1]))).unwrap();
     row.nested(
@@ -607,7 +613,9 @@ fn existing_m_values_and_nested_columns_are_kept() {
 fn a_configured_property_that_is_not_a_string_is_rejected() {
     let mut layer = TileLayer::builder("l", 4096).unwrap();
     let f = layer.add_property("f", PropKind::U32).unwrap();
-    let mut row = layer.feature(Geometry::from(LineString::from(vec![(0, 0), (1, 0)])));
+    let mut row = layer
+        .feature(Geometry::from(LineString::from(vec![(0, 0), (1, 0)])))
+        .unwrap();
     row.property(f, PropValue::U32(Some(5))).unwrap();
     row.finish().unwrap();
 
@@ -626,7 +634,9 @@ fn a_configured_property_that_is_not_a_string_is_rejected() {
 fn a_rejected_feature_without_an_id_is_named_by_its_field_alone() {
     let mut layer = TileLayer::builder("l", 4096).unwrap();
     let f = layer.add_property("f", PropKind::Str).unwrap();
-    let mut row = layer.feature(Geometry::from(LineString::from(vec![(0, 0), (1, 0)])));
+    let mut row = layer
+        .feature(Geometry::from(LineString::from(vec![(0, 0), (1, 0)])))
+        .unwrap();
     row.property(f, PropValue::Str(Some("007".into()))).unwrap();
     row.finish().unwrap();
 
@@ -697,9 +707,12 @@ fn every_column_kind_survives_verify() {
         )
         .unwrap();
     for (id, y) in [(1, 4000), (2, 0)] {
-        let mut row = layer.feature(Geometry::from(LineString::from(vec![(0, y), (1, y)])));
+        let line = FeatureGeometry::from_geometry(&LineString::from(vec![(0, y), (1, y)]))
+            .unwrap()
+            .with_z([-1, 1])
+            .unwrap();
+        let mut row = layer.feature(line).unwrap();
         row.id(Some(id));
-        row.z(vec![-1, 1]).unwrap();
         for (key, (_, value)) in prop_keys.iter().zip(&props) {
             row.property(*key, value.clone()).unwrap();
         }
@@ -753,7 +766,7 @@ fn restored(config: &str, items: &[&str]) -> anyhow::Result<TileLayer> {
     let f = layer
         .add_nested("f", NestedKind::list(NestedKind::Leaf(PropKind::Str)))
         .unwrap();
-    let mut row = layer.feature(Geometry::from(Point::new(1, 2)));
+    let mut row = layer.feature(Geometry::from(Point::new(1, 2))).unwrap();
     row.id(Some(1));
     let leaves = items
         .iter()
@@ -840,9 +853,12 @@ fn strings_or_null(cases: &[(i32, Option<&str>)]) -> TileLayer {
     for (id, &(vertices, input)) in (1_u64..).zip(cases) {
         let y = i32::try_from(id).unwrap();
         let line = LineString::from((0..vertices).map(|x| (x, y)).collect::<Vec<_>>());
-        let mut row = layer.feature(Geometry::from(line));
+        let line = FeatureGeometry::from_geometry(&line)
+            .unwrap()
+            .with_z((0..vertices).map(|i| 100 + i))
+            .unwrap();
+        let mut row = layer.feature(line).unwrap();
         row.id(Some(id));
-        row.z((0..vertices).map(|i| 100 + i).collect()).unwrap();
         row.property(f, PropValue::Str(input.map(str::to_owned)))
             .unwrap();
         row.property(name, PropValue::Str(Some("unparsed".into())))

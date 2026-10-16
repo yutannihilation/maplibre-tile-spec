@@ -76,7 +76,8 @@ fn make_nullable_strings(n: usize) -> Vec<Option<String>> {
 fn make_geometry(n: usize) -> GeometryValues {
     let mut g = GeometryValues::default();
     for _ in 0..n {
-        g.push_geom(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)));
+        g.push_geometry(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)))
+            .unwrap();
     }
     g
 }

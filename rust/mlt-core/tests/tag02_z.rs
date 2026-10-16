@@ -1,6 +1,7 @@
 //! Round-trip and wire-level tests for v2 z coordinates, the third word of each vertex.
 
 use insta::assert_snapshot;
+use mlt_core::FeatureGeometry;
 use mlt_core::dump::{DumpTree, RenderOpts, annotate_tile, render};
 use mlt_core::encoder::{EncoderConfig, WireVersion};
 use mlt_core::geo_types::{
@@ -76,13 +77,19 @@ fn z_layer(geoms: Vec<Geometry<i32>>) -> TileLayer {
     builder.set_z_step(step()).unwrap();
     let mut next = 0;
     for geom in geoms {
-        let n = TileFeature::new(geom.clone()).vertex_count();
-        let z = (next..next + n)
+        let n = TileFeature::new(geom.clone()).unwrap().vertex_count();
+        let z: Vec<i32> = (next..next + n)
             .map(|i| 1 + i32::try_from(i).unwrap() * 7)
             .collect();
         next += n;
-        let mut feature = builder.feature(geom);
-        feature.z(z).unwrap();
+        let feature = builder
+            .feature(
+                FeatureGeometry::from_geometry(&geom)
+                    .unwrap()
+                    .with_z(z)
+                    .unwrap(),
+            )
+            .unwrap();
         feature.finish().unwrap();
     }
     builder.finish()
@@ -148,7 +155,7 @@ fn a_triangles_only_feature_carries_the_z_of_each_corner_in_index_order() {
     assert_eq!(geometry_layout(&bytes), "geometry layout = TessPolygons");
     let tile = decode(&bytes);
     assert_eq!(tile.z_step(), Some(step()));
-    assert_snapshot!(format!("{:?}", tile.features()[0].z()), @"[15, 22, 1, 1, 8, 15]");
+    assert_snapshot!(format!("{:?}", tile.features()[0].geometry().z().unwrap().collect::<Vec<_>>()), @"[15, 22, 1, 1, 8, 15]");
     assert_round_trips(&tile, cfg_v2());
 }
 
@@ -158,8 +165,14 @@ fn repeated_vertices_pick_a_dictionary() {
         let mut builder = TileLayer::builder("z", 4096).unwrap();
         builder.set_z_step(step()).unwrap();
         for i in 0..200 {
-            let mut feature = builder.feature(pt((i % 7) * 10, (i % 5) * 10));
-            feature.z(vec![i % 3]).unwrap();
+            let feature = builder
+                .feature(
+                    FeatureGeometry::from_geometry(&pt((i % 7) * 10, (i % 5) * 10))
+                        .unwrap()
+                        .with_z(vec![i % 3])
+                        .unwrap(),
+                )
+                .unwrap();
             feature.finish().unwrap();
         }
         builder.finish()
@@ -180,8 +193,14 @@ fn z_and_m_values_round_trip_together() {
     let mut builder = TileLayer::builder("z", 4096).unwrap();
     builder.set_z_step(step()).unwrap();
     let key = builder.add_m_value("m", PropKind::U32).unwrap();
-    let mut feature = builder.feature(line(&[(0, 0), (10, 10), (20, 0)]));
-    feature.z(vec![3, 2, 1]).unwrap();
+    let mut feature = builder
+        .feature(
+            FeatureGeometry::from_geometry(&line(&[(0, 0), (10, 10), (20, 0)]))
+                .unwrap()
+                .with_z(vec![3, 2, 1])
+                .unwrap(),
+        )
+        .unwrap();
     feature
         .m_value(key, MValue::U32(Some(vec![7, 8, 9])))
         .unwrap();
@@ -214,7 +233,7 @@ fn the_vertex_stream_header_names_its_step() {
 #[test]
 fn geometry_values_take_z_only_once() {
     let mut geometry = GeometryValues::default();
-    geometry.push_geom(&pt(1, 2));
+    geometry.push_geometry(&pt(1, 2)).unwrap();
     geometry.add_z(step(), &[7]).unwrap();
     let err = geometry.add_z(step(), &[7]).unwrap_err();
     assert_snapshot!(err, @"the vertices already carry z coordinates");
@@ -223,7 +242,7 @@ fn geometry_values_take_z_only_once() {
 #[test]
 fn geometry_values_take_one_z_per_vertex() {
     let mut geometry = GeometryValues::default();
-    geometry.push_geom(&line(&[(0, 0), (1, 1)]));
+    geometry.push_geometry(&line(&[(0, 0), (1, 1)])).unwrap();
     let err = geometry.add_z(step(), &[7]).unwrap_err();
     assert_snapshot!(err, @"a feature carries 1 z coordinates, but the layer expects 2");
     assert_eq!(geometry.z_step(), None);
@@ -241,35 +260,42 @@ fn v1_rejects_a_layer_with_z() {
 fn a_feature_with_the_wrong_number_of_z_is_rejected() {
     let mut builder = TileLayer::builder("z", 4096).unwrap();
     builder.set_z_step(step()).unwrap();
-    let err = builder
-        .feature(line(&[(0, 0), (1, 1)]))
-        .z(vec![1])
-        .map(|_| ())
+    let err = FeatureGeometry::from_geometry(&line(&[(0, 0), (1, 1)]))
+        .unwrap()
+        .with_z([1])
         .unwrap_err();
     assert_snapshot!(err, @"a feature carries 1 z coordinates, but the layer expects 2");
+    let _ = &mut builder;
 }
 
 #[test]
 fn a_feature_without_z_is_rejected_on_a_z_layer() {
     let mut builder = TileLayer::builder("z", 4096).unwrap();
     builder.set_z_step(step()).unwrap();
-    let err = builder.feature(pt(1, 2)).finish().unwrap_err();
-    assert_snapshot!(err, @"a feature carries 0 z coordinates, but the layer expects 1");
+    let err = builder.feature(pt(1, 2)).unwrap().finish().unwrap_err();
+    assert_snapshot!(err, @"geometry: expected Xyz like the layer, got Xy");
 }
 
 #[test]
 fn a_feature_with_z_is_rejected_on_a_flat_layer() {
     let mut layer = TileLayer::new("flat", 4096).unwrap();
-    let mut feature = TileFeature::new(pt(1, 2));
-    feature.set_z(vec![5]).unwrap();
+    let feature = TileFeature::new(
+        FeatureGeometry::from_geometry(&pt(1, 2))
+            .unwrap()
+            .with_z([5])
+            .unwrap(),
+    )
+    .unwrap();
     let err = layer.push_feature(feature).unwrap_err();
-    assert_snapshot!(err, @"a feature carries 1 z coordinates, but the layer expects 0");
+    assert_snapshot!(err, @"geometry: expected Xy like the layer, got Xyz");
 }
 
 #[test]
 fn a_layer_holding_features_cannot_take_a_step() {
     let mut layer = TileLayer::new("flat", 4096).unwrap();
-    layer.push_feature(TileFeature::new(pt(1, 2))).unwrap();
+    layer
+        .push_feature(TileFeature::new(pt(1, 2)).unwrap())
+        .unwrap();
     let err = layer.set_z_step(step()).unwrap_err();
     assert_snapshot!(err, @"layer flat already holds features without z coordinates, so it cannot be given a z step");
 }

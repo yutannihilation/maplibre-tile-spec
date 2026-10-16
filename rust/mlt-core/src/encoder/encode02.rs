@@ -953,7 +953,9 @@ mod tests {
     fn points(count: usize) -> GeometryValues {
         let mut geometry = GeometryValues::default();
         for _ in 0..count {
-            geometry.push_geom(&Geometry::<i32>::Point(Point::new(0, 0)));
+            geometry
+                .push_geometry(&Geometry::<i32>::Point(Point::new(0, 0)))
+                .unwrap();
         }
         geometry
     }

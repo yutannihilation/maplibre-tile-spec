@@ -537,9 +537,9 @@ impl LayerSource for LayerWriter<'_> {
         let parts = geometry.parts(groups.clone());
         let part = |p| geometry.part(p);
         match geometry.types[feature] {
-            GeometryType::Point => values.push_point(geometry.feature_coords(feature)[0]),
+            GeometryType::Point => values.push_point(geometry.feature_coords(feature)[0].into()),
             GeometryType::MultiPoint => {
-                values.push_multi_point(geometry.feature_coords(feature).iter().copied());
+                values.push_multi_point(geometry.feature_coords(feature).iter().map(|&c| c.into()));
             }
             GeometryType::LineString => values.push_linestring(part(parts.start)),
             GeometryType::MultiLineString => values.push_multi_linestring(parts.map(part)),
@@ -775,10 +775,11 @@ mod tests {
         let mut layer = TileLayer::builder("l", 4096).unwrap();
         layer
             .feature(Geometry::Point(Point::new(1, 1)))
+            .unwrap()
             .finish()
             .unwrap();
         let flag = layer.add_property("flag", PropKind::Bool).unwrap();
-        let mut feature = layer.feature(Geometry::Point(Point::new(2, 2)));
+        let mut feature = layer.feature(Geometry::Point(Point::new(2, 2))).unwrap();
         feature.property(flag, PropValue::Bool(Some(true))).unwrap();
         feature.finish().unwrap();
         let layer = layer.finish();
@@ -804,7 +805,7 @@ mod tests {
 
         let mut layer = TileLayer::builder("l", 4096).unwrap();
         let flag = layer.add_property("flag", PropKind::Bool).unwrap();
-        let mut feature = layer.feature(Geometry::Point(Point::new(2, 2)));
+        let mut feature = layer.feature(Geometry::Point(Point::new(2, 2))).unwrap();
         feature.property(flag, PropValue::Bool(Some(true))).unwrap();
         feature.finish().unwrap();
         let layer = layer.finish();

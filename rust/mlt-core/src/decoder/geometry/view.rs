@@ -699,6 +699,19 @@ impl LineView<'_> {
     }
 }
 
+impl<'a> LineView<'a> {
+    /// The interleaved words the layer stores for this part, closing vertex excluded, or
+    /// `None` for the ring of a triangle.
+    pub(crate) fn stored_words(&self) -> Option<&'a [i32]> {
+        let range = self.vertex_range()?;
+        let stride = self.values.stride();
+        self.values
+            .vertices()
+            .unwrap_or(&[])
+            .get(range.start * stride..range.end * stride)
+    }
+}
+
 impl<'a> GeometryTrait for LineView<'a> {
     view_slots!('a);
 

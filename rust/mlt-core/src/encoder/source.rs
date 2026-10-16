@@ -1,13 +1,9 @@
 //! The encoder's view of a layer: its features one at a time, however they are stored.
 
 use fast_mvt::{MvtFeatureBuilder, MvtLayerBuilder};
-use geo::CoordsIter as _;
-use geo_types::{Coord, Geometry};
+use geo_types::Coord;
 
 use crate::decoder::GeometryValues;
-use crate::encoder::geometry::coord_count;
-#[cfg(feature = "unstable-v2")]
-use crate::encoder::geometry::wound_vertex_order;
 use crate::tile::{Extent, PropKind, TileLayer};
 #[cfg(feature = "unstable-v2")]
 use crate::tile::{MValue, NestedKind, NestedValue, ZStep};
@@ -45,11 +41,6 @@ pub(crate) trait LayerSource {
     #[cfg(feature = "unstable-v2")]
     fn nested(&self, _feature: usize, _column: usize) -> Option<&NestedValue> {
         None
-    }
-    /// The feature's z values, one per stored vertex.
-    #[cfg(feature = "unstable-v2")]
-    fn z(&self, _feature: usize) -> &[i32] {
-        &[]
     }
     /// Where each stored vertex of the feature moves to when its rings are wound,
     /// or [`None`] when none does, which the values held per vertex must follow.
@@ -127,17 +118,22 @@ impl LayerSource for TileLayer {
     }
 
     fn coords(&self) -> impl Iterator<Item = Coord<i32>> + '_ {
-        self.features.iter().flat_map(|f| f.geometry.coords_iter())
+        self.features
+            .iter()
+            .flat_map(|f| f.geometry.vertices().map(Coord::from))
     }
 
     #[inline]
     fn first_coord(&self, feature: usize) -> Option<Coord<i32>> {
-        first_vertex(&self.features[feature].geometry)
+        self.features[feature]
+            .geometry
+            .first_vertex()
+            .map(Coord::from)
     }
 
     #[inline]
     fn coord_count(&self, feature: usize) -> usize {
-        coord_count(&self.features[feature].geometry)
+        self.features[feature].geometry.vertex_count()
     }
 
     fn push_geometry(&self, feature: usize, geometry: &mut GeometryValues) {
@@ -145,7 +141,7 @@ impl LayerSource for TileLayer {
     }
 
     fn mvt_feature(&self, feature: usize, layer: MvtLayerBuilder) -> MltResult<MvtFeatureBuilder> {
-        Ok(layer.feature(&self.features[feature].geometry)?)
+        crate::convert::mvt::mvt_feature_of(&self.features[feature].geometry, layer)
     }
 
     #[cfg(feature = "unstable-v2")]
@@ -170,30 +166,7 @@ impl LayerSource for TileLayer {
     }
 
     #[cfg(feature = "unstable-v2")]
-    fn z(&self, feature: usize) -> &[i32] {
-        &self.features[feature].z
-    }
-
-    #[cfg(feature = "unstable-v2")]
     fn vertex_order(&self, feature: usize) -> Option<Vec<usize>> {
-        wound_vertex_order(&self.features[feature].geometry)
-    }
-}
-
-/// The first coordinate of a geometry, which is what spatial sorts order features by.
-fn first_vertex(geom: &Geometry<i32>) -> Option<Coord<i32>> {
-    match geom {
-        Geometry::<i32>::Point(p) => Some(p.0),
-        Geometry::<i32>::Line(l) => Some(l.start),
-        Geometry::<i32>::LineString(ls) => ls.0.first().copied(),
-        Geometry::<i32>::Polygon(p) => p.exterior().0.first().copied(),
-        Geometry::<i32>::MultiPoint(mp) => mp.0.first().map(|p| p.0),
-        Geometry::<i32>::MultiLineString(mls) => mls.0.first().and_then(|ls| ls.0.first().copied()),
-        Geometry::<i32>::MultiPolygon(mp) => {
-            mp.0.first().and_then(|p| p.exterior().0.first().copied())
-        }
-        Geometry::<i32>::Triangle(t) => Some(t.v1()),
-        Geometry::<i32>::Rect(r) => Some(r.min()),
-        Geometry::<i32>::GeometryCollection(gc) => gc.0.first().and_then(first_vertex),
+        self.features[feature].geometry.wound_vertex_order()
     }
 }

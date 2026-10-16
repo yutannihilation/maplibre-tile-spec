@@ -56,12 +56,12 @@ fn every_m_value_kind_rides_along_as_an_array_property() {
         .map(|(name, value)| builder.add_m_value(*name, value.kind()).expect("add"))
         .collect();
 
-    let mut measured = builder.feature(line(0));
+    let mut measured = builder.feature(line(0)).unwrap();
     for (key, (_, value)) in keys.iter().zip(&columns) {
         measured.m_value(*key, value.clone()).expect("set");
     }
     measured.finish().expect("push");
-    builder.feature(line(10)).finish().expect("push");
+    builder.feature(line(10)).unwrap().finish().expect("push");
 
     assert_snapshot!(as_geojson(&builder.finish()), @r#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"_extent":4096,"_layer":"mvals","m:bool":[true,false],"m:f32":[0.5,"f32::INFINITY"],"m:f64":[-0.25,"f64::NAN"],"m:i32":[-2147483648,2],"m:i64":[-9223372036854775808,2],"m:i8":[-128,2],"m:str":["a","b"],"m:u32":[0,4294967295],"m:u64":[0,18446744073709551615],"m:u8":[0,255]},"geometry":{"type":"LineString","coordinates":[[0,0],[1,1]]}},{"type":"Feature","properties":{"_extent":4096,"_layer":"mvals"},"geometry":{"type":"LineString","coordinates":[[10,10],[11,11]]}}]}"#);
 }
@@ -102,7 +102,7 @@ fn nested_columns_serialize_under_their_own_name() {
         ("inner", NestedValue::Map(None)),
     ]);
 
-    let mut first = builder.feature(line(0));
+    let mut first = builder.feature(line(0)).unwrap();
     first.nested(map_key, filled).expect("set map");
     first
         .nested(
@@ -115,14 +115,14 @@ fn nested_columns_serialize_under_their_own_name() {
         .expect("set list");
     first.finish().expect("push");
 
-    let mut second = builder.feature(line(10));
+    let mut second = builder.feature(line(10)).unwrap();
     second.nested(map_key, all_null).expect("set map");
     second
         .nested(list_key, NestedValue::list([]))
         .expect("set list");
     second.finish().expect("push");
 
-    let mut third = builder.feature(line(20));
+    let mut third = builder.feature(line(20)).unwrap();
     third
         .nested(map_key, NestedValue::Map(None))
         .expect("set map");

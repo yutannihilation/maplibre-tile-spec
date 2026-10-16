@@ -608,9 +608,12 @@ mod tests {
 
     fn three_points() -> GeometryValues {
         let mut g = GeometryValues::default();
-        g.push_geom(&Geometry::<i32>::Point(Point::new(1, 2)));
-        g.push_geom(&Geometry::<i32>::Point(Point::new(3, 4)));
-        g.push_geom(&Geometry::<i32>::Point(Point::new(5, 6)));
+        g.push_geometry(&Geometry::<i32>::Point(Point::new(1, 2)))
+            .unwrap();
+        g.push_geometry(&Geometry::<i32>::Point(Point::new(3, 4)))
+            .unwrap();
+        g.push_geometry(&Geometry::<i32>::Point(Point::new(5, 6)))
+            .unwrap();
         g
     }
 

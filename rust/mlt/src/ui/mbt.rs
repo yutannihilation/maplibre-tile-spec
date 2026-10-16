@@ -14,9 +14,15 @@ use rstar::{AABB, PointDistance, RTree, RTreeObject};
 
 use super::group_by_layer;
 use super::state::LayerGroup;
-use super::tile::{CACHE_BYTES, fc_memory_estimate};
+use super::tile::{CACHE_BYTES, fc_memory_estimate, geometries_of};
 
-type DecodedTile = (FeatureCollection, u32, Vec<LayerGroup>, RTree<MbtGeoEntry>);
+struct DecodedTile {
+    fc: FeatureCollection,
+    geometries: Vec<Geometry<i32>>,
+    extent: u32,
+    layer_groups: Vec<LayerGroup>,
+    geo_index: RTree<MbtGeoEntry>,
+}
 type BestHover = Option<(f64, (u8, u32, u32), usize, usize)>;
 
 // ---------------------------------------------------------------------------
@@ -156,6 +162,8 @@ pub(crate) enum MbtTileData {
     Error(String),
     Loaded {
         fc: FeatureCollection,
+        /// One `geo-types` tree per feature of `fc`, in feature order, for drawing.
+        geometries: Vec<Geometry<i32>>,
         extent: u32,
         layer_groups: Vec<LayerGroup>,
         geo_index: RTree<MbtGeoEntry>,
@@ -500,10 +508,17 @@ impl MbtilesState {
             Err(e) => MbtTileData::Error(e),
             Ok(None) => MbtTileData::Empty,
             Ok(Some(raw)) => match decode_and_parse(res.z, res.x, res.y, raw) {
-                Ok(Some((fc, extent, layer_groups, geo_index))) => {
+                Ok(Some(DecodedTile {
+                    fc,
+                    geometries,
+                    extent,
+                    layer_groups,
+                    geo_index,
+                })) => {
                     let bytes = loaded_bytes(&fc, &geo_index);
                     MbtTileData::Loaded {
                         fc,
+                        geometries,
                         extent,
                         layer_groups,
                         geo_index,
@@ -692,8 +707,15 @@ fn decode_and_parse(z: u8, tx: u32, ty: u32, raw: Vec<u8>) -> anyhow::Result<Opt
         .and_then(serde_json::Value::as_u64)
         .map_or(4096, |v| u32::try_from(v).unwrap_or(4096));
     let layer_groups = group_by_layer(&fc);
-    let geo_index = build_world_geo_index(z, tx, ty, &fc, &layer_groups, extent);
-    Ok(Some((fc, extent, layer_groups, geo_index)))
+    let geometries = geometries_of(&fc);
+    let geo_index = build_world_geo_index(z, tx, ty, &geometries, &layer_groups, extent);
+    Ok(Some(DecodedTile {
+        fc,
+        geometries,
+        extent,
+        layer_groups,
+        geo_index,
+    }))
 }
 
 fn decompress(raw: Vec<u8>) -> anyhow::Result<Vec<u8>> {
@@ -711,7 +733,7 @@ fn build_world_geo_index(
     z: u8,
     tx: u32,
     ty: u32,
-    fc: &FeatureCollection,
+    geometries: &[Geometry<i32>],
     layer_groups: &[LayerGroup],
     extent: u32,
 ) -> RTree<MbtGeoEntry> {
@@ -719,8 +741,7 @@ fn build_world_geo_index(
     let mut entries = Vec::new();
     for (li, group) in layer_groups.iter().enumerate() {
         for (fi, &gi) in group.feature_indices.iter().enumerate() {
-            let geom = &fc.features[gi].geometry;
-            let vertices = transform.geom_verts(geom);
+            let vertices = transform.geom_verts(&geometries[gi]);
             if !vertices.is_empty() {
                 entries.push(MbtGeoEntry {
                     layer: li,

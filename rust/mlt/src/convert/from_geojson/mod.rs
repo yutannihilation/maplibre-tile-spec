@@ -22,7 +22,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result as AnyResult, bail};
 use geojson::{Feature, FeatureCollection, GeoJson};
 use martin_tile_utils::MAX_ZOOM;
-use mlt_core::geo_types::Geometry;
+use mlt_core::FeatureGeometry;
 use mlt_core::geojson::PropertySchema;
 use mlt_core::{Decoder, MltError, Parser, PropValue, TileLayer, ZStep};
 use rayon::prelude::*;
@@ -63,9 +63,8 @@ struct Source {
 /// One feature rounded onto a tile's grid.
 struct Entry {
     id: Option<u64>,
-    geometry: Geometry<i32>,
-    /// The z of each stored vertex, in the order the layer counts them; unused on a flat layer.
-    z: Vec<i32>,
+    /// With z on a z layer.
+    geometry: FeatureGeometry,
     props: Arc<Vec<(usize, PropValue)>>,
 }
 
@@ -300,11 +299,12 @@ impl Tiler<'_> {
             let entries: Vec<Entry> = features
                 .iter()
                 .filter_map(|f| {
-                    to_tile(&f.geom, zoom, col, row).map(|(geometry, z)| Entry {
-                        id: f.id,
-                        geometry,
-                        z,
-                        props: Arc::clone(&f.props),
+                    to_tile(&f.geom, zoom, col, row, self.layer.z_step.is_some()).map(|geometry| {
+                        Entry {
+                            id: f.id,
+                            geometry,
+                            props: Arc::clone(&f.props),
+                        }
                     })
                 })
                 .collect();
@@ -407,11 +407,8 @@ fn encode_tile(
         .collect::<Result<Vec<_>, _>>()?;
 
     for entry in entries {
-        let mut feature = builder.feature(entry.geometry);
+        let mut feature = builder.feature(entry.geometry)?;
         feature.id(entry.id);
-        if layer.z_step.is_some() {
-            feature.z(entry.z)?;
-        }
         for (idx, value) in entry.props.iter() {
             feature.property(keys[*idx], value.clone())?;
         }

@@ -4,6 +4,7 @@
 use std::fs;
 use std::path::Path;
 
+use mlt_core::FeatureGeometry;
 use mlt_core::encoder::{EncoderConfig, WireVersion};
 use mlt_core::geo_traits::to_geo::ToGeoGeometry as _;
 use mlt_core::geo_traits::{
@@ -136,7 +137,7 @@ fn every_v2_feature_views_like_to_geojson([mlt]: [&Path; 1]) {
 // ───────────────────────────── shapes and levels ─────────────────────────────
 
 fn single(geom: &Geometry<i32>) -> GeometryValues {
-    GeometryValues::default().with_geom(geom)
+    GeometryValues::default().with_geom(&FeatureGeometry::from_geometry(geom).unwrap())
 }
 
 #[test]
@@ -273,7 +274,7 @@ fn mixed_geoms() -> Vec<Geometry<i32>> {
 fn encoded(geoms: &[Geometry<i32>]) -> Vec<u8> {
     let mut builder = TileLayer::builder("mixed", 4096).unwrap();
     for g in geoms {
-        builder.feature(g.clone()).finish().unwrap();
+        builder.feature(g.clone()).unwrap().finish().unwrap();
     }
     encode_and_parse(&builder.finish(), EncoderConfig::default())
 }
@@ -380,14 +381,21 @@ fn z_layer(geoms: Vec<Geometry<i32>>) -> TileLayer {
     builder.set_z_step(step()).unwrap();
     let mut next = 0;
     for geom in geoms {
-        let n = TileFeature::new(geom.clone()).vertex_count();
-        let z = (next..next + n)
+        let n = TileFeature::new(geom.clone()).unwrap().vertex_count();
+        let z: Vec<i32> = (next..next + n)
             .map(|i| 1 + i32::try_from(i).unwrap() * 7)
             .collect();
         next += n;
-        let mut feature = builder.feature(geom);
-        feature.z(z).unwrap();
-        feature.finish().unwrap();
+        builder
+            .feature(
+                FeatureGeometry::from_geometry(&geom)
+                    .unwrap()
+                    .with_z(z)
+                    .unwrap(),
+            )
+            .unwrap()
+            .finish()
+            .unwrap();
     }
     builder.finish()
 }

@@ -10,8 +10,12 @@
 
 use std::collections::HashMap;
 
+use mlt_core::FeatureGeometry;
 use mlt_core::encoder::WireVersion;
-use mlt_core::geo_types::Geometry;
+use mlt_core::geo_traits::{
+    Dimensions, GeometryTrait, GeometryType as GeoKind, LineStringTrait, MultiLineStringTrait,
+    MultiPolygonTrait, PolygonTrait,
+};
 use mlt_core::geojson::FeatureCollection;
 use mlt_core::{PropKind, PropValue, TileLayer, ZStep};
 use pyo3::exceptions::PyValueError;
@@ -94,20 +98,22 @@ pub fn encode_geojson(
     Ok(PyBytes::new(py, &bytes).unbind())
 }
 
-fn validate_non_empty(g: &Geometry<i32>) -> PyResult<()> {
-    let non_empty = match g {
-        Geometry::Point(_) => true,
-        Geometry::MultiPoint(mp) => !mp.0.is_empty(),
-        Geometry::LineString(l) => !l.0.is_empty(),
-        Geometry::MultiLineString(ml) => !ml.0.is_empty() && ml.0.iter().all(|l| !l.0.is_empty()),
-        Geometry::Polygon(p) => !p.exterior().0.is_empty(),
-        Geometry::MultiPolygon(mp) => {
-            !mp.0.is_empty() && mp.0.iter().all(|p| !p.exterior().0.is_empty())
+fn validate_non_empty(g: &FeatureGeometry) -> PyResult<()> {
+    let non_empty = match g.as_type() {
+        GeoKind::MultiLineString(mls) => {
+            mls.num_line_strings() > 0 && mls.line_strings().all(|l| l.num_coords() > 0)
         }
-        Geometry::Line(_)
-        | Geometry::GeometryCollection(_)
-        | Geometry::Rect(_)
-        | Geometry::Triangle(_) => false,
+        GeoKind::MultiPolygon(mp) => {
+            mp.num_polygons() > 0 && mp.polygons().all(|p| p.exterior().is_some())
+        }
+        GeoKind::Point(_)
+        | GeoKind::LineString(_)
+        | GeoKind::Polygon(_)
+        | GeoKind::MultiPoint(_)
+        | GeoKind::GeometryCollection(_)
+        | GeoKind::Rect(_)
+        | GeoKind::Triangle(_)
+        | GeoKind::Line(_) => g.vertex_count() > 0,
     };
     if non_empty {
         Ok(())
@@ -215,9 +221,9 @@ fn build_layer(
             ));
         }
         validate_non_empty(&feat.geometry)?;
-        match (z_step, &feat.z) {
-            (Some(_), None) => return Err(val_err("'z_step' needs [x, y, z] positions")),
-            (None, Some(_)) => return Err(val_err("[x, y, z] positions need a 'z_step'")),
+        match (z_step, feat.geometry.dim() == Dimensions::Xyz) {
+            (Some(_), false) => return Err(val_err("'z_step' needs [x, y, z] positions")),
+            (None, true) => return Err(val_err("[x, y, z] positions need a 'z_step'")),
             _ => {}
         }
         for (key, val) in &feat.properties {
@@ -253,13 +259,10 @@ fn build_layer(
         .map_err(|err| PyValueError::new_err(err.to_string()))?;
 
     for feat in fc.features {
-        let mut feature = builder.feature(feat.geometry);
+        let mut feature = builder
+            .feature(feat.geometry)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         feature.id(feat.id);
-        if let Some(z) = feat.z {
-            feature
-                .z(z)
-                .map_err(|err| PyValueError::new_err(err.to_string()))?;
-        }
         for (key, val) in &feat.properties {
             if val.is_null() {
                 continue;

@@ -18,7 +18,7 @@ use crate::ui::{
 
 pub fn render_tile_preview_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
     if let Some(ref tile) = app.preview {
-        map::render_tile_preview(f, area, &tile.fc, tile.extent);
+        map::render_tile_preview(f, area, &tile.geometries, tile.extent);
         return;
     }
     let selected = app.get_selected_file().map(LsRow::path);

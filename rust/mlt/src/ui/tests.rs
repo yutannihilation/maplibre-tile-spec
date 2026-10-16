@@ -5,10 +5,11 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use insta::assert_snapshot;
+use mlt_core::FeatureGeometry;
 use mlt_core::GeometryType;
 use mlt_core::geo_types::{
-    Coord, Geometry, GeometryCollection, Line, LineString, MultiLineString, MultiPoint,
-    MultiPolygon, Point, Polygon, Rect as GeoRect, Triangle,
+    Coord, Geometry, Line, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon,
+    Rect as GeoRect, Triangle,
 };
 use mlt_core::geojson::{Feature, FeatureCollection};
 use ratatui::Terminal;
@@ -68,8 +69,7 @@ fn feature(layer: &str, geometry: impl Into<Geometry<i32>>, props: &[(&str, Valu
     properties.insert("_layer".into(), json!(layer));
     properties.insert("_extent".into(), json!(4096));
     Feature {
-        geometry: geometry.into(),
-        z: None,
+        geometry: FeatureGeometry::from_geometry(&geometry.into()).unwrap(),
         id: None,
         properties,
         ty: "Feature".into(),
@@ -1668,7 +1668,7 @@ fn help_renders_for_the_file_browser() {
 }
 
 #[test]
-fn layer_summary_lists_every_value_type_and_skips_unknown_geometries() {
+fn layer_summary_lists_every_value_type_and_counts_rect_line_triangle_as_their_stored_kind() {
     let odd = vec![
         feature(
             "odd",
@@ -1687,13 +1687,6 @@ fn layer_summary_lists_every_value_type_and_skips_unknown_geometries() {
         ),
         feature("odd", Line::new(c(0, 0), c(9, 9)), &[]),
         feature("odd", Triangle::new(c(0, 0), c(4, 0), c(0, 4)), &[]),
-        feature(
-            "odd",
-            Geometry::<i32>::GeometryCollection(GeometryCollection(vec![Geometry::Point(Point(
-                c(7, 7),
-            ))])),
-            &[],
-        ),
     ];
     let fc = FeatureCollection {
         features: odd,

@@ -38,6 +38,7 @@ pub(crate) mod decoder;
 pub mod dump;
 pub mod encoder;
 pub(crate) mod errors;
+pub(crate) mod feature_geometry;
 pub(crate) mod layer_writer;
 pub(crate) mod tile;
 pub(crate) mod utils;
@@ -64,6 +65,7 @@ pub use decoder::{
 };
 pub(crate) use errors::MltRefResult;
 pub use errors::{MltError, MltResult};
+pub use feature_geometry::{FeatureGeometry, IntoFeatureGeometry, LineRef, PointRef, PolygonRef};
 pub use layer_writer::{FeatureWriter, LayerWriter};
 pub use tile::{
     ColumnRole, Extent, PropKind, PropValue, PropertyKey, TileFeature, TileFeatureBuilder,

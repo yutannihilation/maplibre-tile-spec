@@ -117,9 +117,10 @@ pub(crate) fn curve_params(source: &impl LayerSource) -> CurveParams {
 
 #[cfg(test)]
 mod tests {
+    use crate::FeatureGeometry;
     use geo_types::{
-        Coord, Geometry as GeoGeom, Geometry, GeometryCollection, Line, LineString,
-        MultiLineString, MultiPoint, MultiPolygon, Point, Polygon, Rect, Triangle,
+        Coord, Geometry as GeoGeom, Geometry, Line, LineString, MultiLineString, MultiPoint,
+        MultiPolygon, Point, Polygon, Rect, Triangle,
     };
     use rstest::rstest;
 
@@ -188,7 +189,7 @@ mod tests {
     fn canonical(geoms: &[Geometry<i32>]) -> GeometryValues {
         let mut decoded = GeometryValues::default();
         for g in geoms {
-            decoded.push_geom(g);
+            decoded.push_geometry(g).unwrap();
         }
         roundtrip_geom(&decoded)
     }
@@ -201,14 +202,12 @@ mod tests {
             .zip(ids.iter())
             .map(|(g, &id)| TileFeature {
                 id: Some(id),
-                geometry: g.clone(),
+                geometry: FeatureGeometry::from_geometry(g).unwrap(),
                 properties: vec![],
                 #[cfg(feature = "unstable-v2")]
                 m_values: vec![],
                 #[cfg(feature = "unstable-v2")]
                 nested: vec![],
-                #[cfg(feature = "unstable-v2")]
-                z: Vec::new(),
             })
             .collect();
 
@@ -230,7 +229,7 @@ mod tests {
 
         let mut sorted_decoded = GeometryValues::default();
         for f in layer.features() {
-            sorted_decoded.push_geom(f.geometry());
+            sorted_decoded.push_geometry(f.geometry()).unwrap();
         }
 
         let after_roundtrip = roundtrip_geom(&sorted_decoded);
@@ -340,7 +339,7 @@ mod tests {
         let geom_types: Vec<&str> = layer
             .features()
             .iter()
-            .map(|f| GeometryType::try_from(f.geometry()).unwrap().into())
+            .map(|f| f.geometry().geometry_type().into())
             .collect();
         assert_eq!(geom_types, vec!["LineString", "Point", "Point"]);
     }
@@ -357,14 +356,12 @@ mod tests {
                 .zip(ids.iter())
                 .map(|(g, &id)| TileFeature {
                     id,
-                    geometry: g.clone(),
+                    geometry: FeatureGeometry::from_geometry(g).unwrap(),
                     properties: vec![],
                     #[cfg(feature = "unstable-v2")]
                     m_values: vec![],
                     #[cfg(feature = "unstable-v2")]
                     nested: vec![],
-                    #[cfg(feature = "unstable-v2")]
-                    z: Vec::new(),
                 })
                 .collect(),
         )
@@ -451,7 +448,7 @@ mod tests {
     fn vertices_from_source(source: &TileLayer) -> Vec<i32> {
         let mut geom = GeometryValues::default();
         for f in source.features() {
-            geom.push_geom(f.geometry());
+            geom.push_geometry(f.geometry()).unwrap();
         }
         geom.vertices().unwrap_or_default().to_vec()
     }
@@ -503,7 +500,7 @@ mod tests {
         let types: Vec<_> = source
             .features()
             .iter()
-            .map(|f| GeometryType::try_from(f.geometry()).unwrap())
+            .map(|f| f.geometry().geometry_type())
             .collect();
 
         assert_eq!(
@@ -546,7 +543,8 @@ mod tests {
     fn spatial_sort_reads_the_first_vertex_of_every_geometry_kind() {
         let at = |k: i32| Coord { x: k, y: k };
         let geoms = [
-            GeoGeom::Rect(Rect::new(at(0), at(20))),
+            // A rect becomes a polygon whose ring starts at its (max x, min y) corner.
+            GeoGeom::Rect(Rect::new(Coord { x: -20, y: 0 }, Coord { x: 0, y: 20 })),
             GeoGeom::Triangle(Triangle::new(at(1), at(11), at(21))),
             GeoGeom::MultiPolygon(MultiPolygon(vec![Polygon::new(
                 LineString(vec![at(2), at(12), at(22), at(2)]),
@@ -561,9 +559,7 @@ mod tests {
             GeoGeom::LineString(LineString(vec![at(6), at(16)])),
             GeoGeom::Line(Line::new(at(7), at(17))),
             GeoGeom::Point(Point::from(at(8))),
-            GeoGeom::GeometryCollection(GeometryCollection(vec![GeoGeom::Point(Point::from(at(
-                9,
-            )))])),
+            GeoGeom::Point(Point::from(at(9))),
             GeoGeom::LineString(LineString(vec![])),
         ];
         let ids: Vec<Option<u64>> = (0..u64::try_from(geoms.len()).unwrap()).map(Some).collect();
@@ -630,10 +626,8 @@ mod tests {
             GeoGeom::MultiLineString(MultiLineString(vec![LineString(vec![])])),
             GeoGeom::MultiPolygon(MultiPolygon(vec![])),
             GeoGeom::MultiPolygon(MultiPolygon(vec![empty_ring()])),
-            GeoGeom::GeometryCollection(GeometryCollection(vec![])),
-            GeoGeom::GeometryCollection(GeometryCollection(vec![GeoGeom::LineString(LineString(
-                vec![],
-            ))])),
+            GeoGeom::MultiLineString(MultiLineString(vec![])),
+            GeoGeom::LineString(LineString(vec![])),
             pt(1, 1),
         ];
         let ids: Vec<Option<u64>> = (0..u64::try_from(geoms.len()).unwrap()).map(Some).collect();

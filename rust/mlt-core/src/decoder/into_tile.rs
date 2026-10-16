@@ -5,8 +5,6 @@
 //! feature, owning its geometry and property values outright. That is the form
 //! the optimizer, the sorting pipeline, and the converters work in.
 
-use geo_traits::to_geo::ToGeoGeometry as _;
-
 use crate::decoder::{Layer, Layer01, ParsedLayer, ParsedLayer01, ParsedProperty};
 #[cfg(feature = "unstable-v2")]
 use crate::decoder::{Layer02, MValueSpans, ParsedLayer02, ParsedMValue, ParsedNested};
@@ -14,7 +12,7 @@ use crate::errors::AsMltError as _;
 #[cfg(feature = "unstable-v2")]
 use crate::tile::{MValue, NestedKind, NestedValue};
 use crate::tile::{PropValue, TileFeature, TileLayer};
-use crate::{Decoder, Lazy, LendingIterator, MltResult};
+use crate::{Decoder, FeatureGeometry, Lazy, LendingIterator, MltResult};
 
 /// The parts of a [`TileLayer`] every wire version produces the same way.
 struct TileParts {
@@ -60,14 +58,12 @@ impl ParsedLayer01<'_> {
 
             features.push(TileFeature {
                 id: feat.id(),
-                geometry: feat.geometry().to_geometry(),
+                geometry: FeatureGeometry::from_view_budgeted(feat.geometry(), dec)?,
                 properties: values,
                 #[cfg(feature = "unstable-v2")]
                 m_values: Vec::new(),
                 #[cfg(feature = "unstable-v2")]
                 nested: Vec::new(),
-                #[cfg(feature = "unstable-v2")]
-                z: Vec::new(),
             });
         }
         Ok(TileParts {
@@ -100,23 +96,17 @@ impl ParsedLayer02<'_> {
         let mut m_spans = dec.alloc::<MValueSpans>(self.m_values.len())?;
         m_spans.extend(self.m_values.iter().map(|m| m.spans(&self.layer.geometry)));
 
-        let geometry = &self.layer.geometry;
+        let z_step = self.layer.geometry.z_step();
         let mut parts = self.layer.collect_parts(dec)?;
         for (index, feature) in parts.features.iter_mut().enumerate() {
             feature.m_values = m_values_of(&self.m_values, &mut m_spans, dec)?;
             feature.nested = nested_of(&self.nested, index, dec)?;
-            let run = geometry.z_run(index)?;
-            let mut z = dec.alloc::<i32>(run.len())?;
-            for value in run {
-                z.push(value?);
-            }
-            feature.z = z;
         }
         parts
             .finish()?
             .with_m_value_names(m_names)?
             .with_nested(nested_names, nested_kinds)?
-            .with_z_step(geometry.z_step())
+            .with_z_step(z_step)
     }
 }
 

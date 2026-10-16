@@ -4,6 +4,7 @@ use geo_types::Point;
 use proptest::prelude::*;
 use rstest::rstest;
 
+use crate::FeatureGeometry;
 use crate::encoder::SortStrategy::Unsorted;
 use crate::encoder::model::{ExplicitEncoder, StagedLayer, StrEncoding};
 use crate::encoder::optimizer::{Presence, PropertyTypedStats, SharedDictRole};
@@ -140,7 +141,8 @@ fn ps(s: &str) -> PropValue {
 fn n_point_geometry(n: usize) -> GeometryValues {
     let mut g = GeometryValues::default();
     for _ in 0..n {
-        g.push_geom(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)));
+        g.push_geometry(&geo_types::Geometry::<i32>::Point(Point::new(0, 0)))
+            .unwrap();
     }
     g
 }
@@ -699,14 +701,12 @@ fn try_tile_from_cols(cols: &[(&str, Vec<PropValue>)]) -> MltResult<TileLayer> {
     let features = (0..n)
         .map(|i| TileFeature {
             id: None,
-            geometry: geom.clone(),
+            geometry: FeatureGeometry::from_geometry(&geom).unwrap(),
             properties: cols.iter().map(|(_, vals)| vals[i].clone()).collect(),
             #[cfg(feature = "unstable-v2")]
             m_values: vec![],
             #[cfg(feature = "unstable-v2")]
             nested: vec![],
-            #[cfg(feature = "unstable-v2")]
-            z: Vec::new(),
         })
         .collect();
     TileLayer::from_parts("test", 4096, property_names, features)
@@ -732,14 +732,12 @@ fn tile_from_ids(ids: &[Option<u64>]) -> TileLayer {
         ids.iter()
             .map(|&id| TileFeature {
                 id,
-                geometry: geom.clone(),
+                geometry: FeatureGeometry::from_geometry(&geom).unwrap(),
                 properties: vec![],
                 #[cfg(feature = "unstable-v2")]
                 m_values: vec![],
                 #[cfg(feature = "unstable-v2")]
                 nested: vec![],
-                #[cfg(feature = "unstable-v2")]
-                z: Vec::new(),
             })
             .collect(),
     )

@@ -9,11 +9,12 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
-use geo_types::{Coord, Geometry, LineString};
+use geo_traits::Dimensions;
+use geo_types::Coord;
 #[cfg(feature = "unstable-v2")]
 use num_traits::ToPrimitive as _;
 
-use crate::{MltError, MltResult};
+use crate::{FeatureGeometry, IntoFeatureGeometry, MltError, MltResult};
 
 /// Non-zero tile extent.
 ///
@@ -183,7 +184,7 @@ pub struct TileLayer {
     /// Nested column shapes, parallel to `TileFeature::nested`.
     #[cfg(feature = "unstable-v2")]
     pub(crate) nested_kinds: Vec<NestedKind>,
-    /// The grid of every feature's `TileFeature::z`, or [`None`] for a flat layer.
+    /// The grid every feature's z lies on, or [`None`] for a flat layer.
     #[cfg(feature = "unstable-v2")]
     pub(crate) z_step: Option<ZStep>,
     pub(crate) features: Vec<TileFeature>,
@@ -193,8 +194,8 @@ pub struct TileLayer {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TileFeature {
     pub(crate) id: Option<u64>,
-    /// Geometry as a [`geo_types`] form
-    pub(crate) geometry: Geometry<i32>,
+    /// The geometry, with its z when the layer has a z grid.
+    pub(crate) geometry: FeatureGeometry,
     /// One value per property column, in the same order as
     /// [`TileLayer::property_names`].
     pub(crate) properties: Vec<PropValue>,
@@ -206,9 +207,6 @@ pub struct TileFeature {
     /// One value per nested column, in the same order as [`TileLayer::nested_names`].
     #[cfg(feature = "unstable-v2")]
     pub(crate) nested: Vec<NestedValue>,
-    /// One z per vertex of the geometry on the layer's [`ZStep`] grid, or none in a flat layer.
-    #[cfg(feature = "unstable-v2")]
-    pub(crate) z: Vec<i32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -595,7 +593,7 @@ impl TileLayer {
     pub(crate) fn with_z_step(mut self, step: Option<ZStep>) -> MltResult<Self> {
         self.z_step = step;
         for feature in &self.features {
-            self.validate_z(feature)?;
+            self.validate_dim(feature)?;
         }
         Ok(self)
     }
@@ -684,26 +682,33 @@ impl TileLayer {
         self.validate_m_values(feature)?;
         #[cfg(feature = "unstable-v2")]
         self.validate_nested(feature)?;
-        #[cfg(feature = "unstable-v2")]
-        self.validate_z(feature)?;
+        self.validate_dim(feature)?;
         Ok(())
     }
 
-    /// Check a feature's z coordinates against the layer: one per vertex on a z layer, none on a flat one.
-    #[cfg(feature = "unstable-v2")]
-    fn validate_z(&self, feature: &TileFeature) -> MltResult<()> {
+    /// Check a feature's dimension against the layer: z on a z layer, none on a flat one.
+    /// An empty geometry carries no z, so it fits either.
+    #[cfg_attr(
+        not(feature = "unstable-v2"),
+        expect(clippy::unused_self, reason = "only a v2 layer has z coordinates")
+    )]
+    fn validate_dim(&self, feature: &TileFeature) -> MltResult<()> {
+        if feature.geometry.vertex_count() == 0 {
+            return Ok(());
+        }
+        #[cfg(feature = "unstable-v2")]
         let expected = if self.z_step.is_some() {
-            feature.vertex_count()
+            Dimensions::Xyz
         } else {
-            0
+            Dimensions::Xy
         };
-        if feature.z.len() == expected {
+        #[cfg(not(feature = "unstable-v2"))]
+        let expected = Dimensions::Xy;
+        let actual = feature.geometry.dim();
+        if actual == expected {
             Ok(())
         } else {
-            Err(MltError::ZVertexCountMismatch {
-                expected,
-                actual: feature.z.len(),
-            })
+            Err(MltError::GeometryDimensionMismatch { expected, actual })
         }
     }
 
@@ -750,34 +755,24 @@ impl TileLayer {
 }
 
 impl TileFeature {
-    #[must_use]
-    pub fn new(geometry: Geometry<i32>) -> Self {
-        Self {
+    /// A feature of `geometry`, which may be a [`FeatureGeometry`], a decoded
+    /// [`crate::GeometryView`], or a `geo_types::Geometry<i32>`.
+    pub fn new(geometry: impl IntoFeatureGeometry) -> MltResult<Self> {
+        Ok(Self {
             id: None,
-            geometry,
+            geometry: geometry.into_feature_geometry()?,
             properties: Vec::new(),
             #[cfg(feature = "unstable-v2")]
             m_values: Vec::new(),
             #[cfg(feature = "unstable-v2")]
             nested: Vec::new(),
-            #[cfg(feature = "unstable-v2")]
-            z: Vec::new(),
-        }
+        })
     }
 
-    #[must_use]
-    pub fn with_id(geometry: Geometry<i32>, id: u64) -> Self {
-        Self {
-            id: Some(id),
-            geometry,
-            properties: Vec::new(),
-            #[cfg(feature = "unstable-v2")]
-            m_values: Vec::new(),
-            #[cfg(feature = "unstable-v2")]
-            nested: Vec::new(),
-            #[cfg(feature = "unstable-v2")]
-            z: Vec::new(),
-        }
+    pub fn with_id(geometry: impl IntoFeatureGeometry, id: u64) -> MltResult<Self> {
+        let mut feature = Self::new(geometry)?;
+        feature.id = Some(id);
+        Ok(feature)
     }
 
     #[must_use]
@@ -786,7 +781,7 @@ impl TileFeature {
     }
 
     #[must_use]
-    pub fn geometry(&self) -> &Geometry<i32> {
+    pub fn geometry(&self) -> &FeatureGeometry {
         &self.geometry
     }
 
@@ -799,37 +794,15 @@ impl TileFeature {
     /// its m-values holds.
     ///
     /// A polygon ring's closing vertex is not stored, so it is not counted.
-    #[cfg(feature = "unstable-v2")]
     #[must_use]
     pub fn vertex_count(&self) -> usize {
-        stored_vertex_count(&self.geometry)
+        self.geometry.vertex_count()
     }
 
     #[cfg(feature = "unstable-v2")]
     #[must_use]
     pub fn m_values(&self) -> &[MValue] {
         &self.m_values
-    }
-
-    /// One z per vertex, in the order [`Self::vertex_count`] counts them, or none in a flat layer.
-    #[cfg(feature = "unstable-v2")]
-    #[must_use]
-    pub fn z(&self) -> &[i32] {
-        &self.z
-    }
-
-    /// Set this feature's z coordinates, one per vertex it stores.
-    #[cfg(feature = "unstable-v2")]
-    pub fn set_z(&mut self, z: Vec<i32>) -> MltResult<()> {
-        let expected = self.vertex_count();
-        if z.len() != expected {
-            return Err(MltError::ZVertexCountMismatch {
-                expected,
-                actual: z.len(),
-            });
-        }
-        self.z = z;
-        Ok(())
     }
 
     /// Set this feature's values for one m-value column, which must hold one
@@ -945,7 +918,16 @@ impl TileLayerBuilder {
         self.layer.set_z_step(step)
     }
 
-    pub fn feature(&mut self, geometry: Geometry<i32>) -> TileFeatureBuilder<'_> {
+    /// Start a feature of `geometry`, which may be a [`FeatureGeometry`], a decoded
+    /// [`crate::GeometryView`], or a `geo_types::Geometry<i32>`.
+    pub fn feature(
+        &mut self,
+        geometry: impl IntoFeatureGeometry,
+    ) -> MltResult<TileFeatureBuilder<'_>> {
+        Ok(self.feature_of(geometry.into_feature_geometry()?))
+    }
+
+    fn feature_of(&mut self, geometry: FeatureGeometry) -> TileFeatureBuilder<'_> {
         let properties = self
             .layer
             .property_kinds
@@ -978,8 +960,6 @@ impl TileLayerBuilder {
                 m_values,
                 #[cfg(feature = "unstable-v2")]
                 nested,
-                #[cfg(feature = "unstable-v2")]
-                z: Vec::new(),
             },
         }
     }
@@ -1007,12 +987,10 @@ impl TileLayerBuilder {
             .collect()
     }
 
-    /// A feature with the geometry, id and z of `feature`, and no values yet.
+    /// A feature with the geometry and id of `feature`, and no values yet.
     pub fn feature_like(&mut self, feature: &TileFeature) -> TileFeatureBuilder<'_> {
-        let mut row = self.feature(feature.geometry.clone());
+        let mut row = self.feature_of(feature.geometry.clone());
         row.feature.id = feature.id;
-        #[cfg(feature = "unstable-v2")]
-        row.feature.z.clone_from(&feature.z);
         row
     }
 
@@ -1051,12 +1029,6 @@ impl TileFeatureBuilder<'_> {
     #[cfg(feature = "unstable-v2")]
     pub fn nested(&mut self, key: NestedKey, value: NestedValue) -> MltResult<&mut Self> {
         self.feature.set_nested(key, value)?;
-        Ok(self)
-    }
-
-    #[cfg(feature = "unstable-v2")]
-    pub fn z(&mut self, z: Vec<i32>) -> MltResult<&mut Self> {
-        self.feature.set_z(z)?;
         Ok(self)
     }
 
@@ -1410,41 +1382,12 @@ impl PropValueRef<'_> {
     }
 }
 
-/// How many of a ring's coordinates MLT stores, which is all of them but a closing one.
-pub(crate) fn stored_ring_len(ring: &LineString<i32>) -> usize {
-    stored_len(&ring.0)
-}
-
-/// [`stored_ring_len`] of a ring given as its coordinates.
+/// How many of a ring's coordinates MLT stores: all of them but a closing one.
 pub(crate) fn stored_len(coords: &[Coord<i32>]) -> usize {
     if coords.len() > 1 && coords.last() == coords.first() {
         coords.len() - 1
     } else {
         coords.len()
-    }
-}
-
-/// How many vertices a geometry contributes to the layer's vertex sequence, which
-/// is what an m-value column holds one value per.
-#[cfg(feature = "unstable-v2")]
-pub(crate) fn stored_vertex_count(geom: &Geometry<i32>) -> usize {
-    let polygon = |poly: &geo_types::Polygon<i32>| {
-        std::iter::once(poly.exterior())
-            .chain(poly.interiors())
-            .map(stored_ring_len)
-            .sum::<usize>()
-    };
-    match geom {
-        Geometry::Point(_) => 1,
-        Geometry::Line(_) => 2,
-        Geometry::LineString(ls) => ls.0.len(),
-        Geometry::Polygon(p) => polygon(p),
-        Geometry::MultiPoint(mp) => mp.0.len(),
-        Geometry::MultiLineString(mls) => mls.iter().map(|ls| ls.0.len()).sum(),
-        Geometry::MultiPolygon(mp) => mp.iter().map(polygon).sum(),
-        Geometry::Triangle(t) => polygon(&t.to_polygon()),
-        Geometry::Rect(r) => polygon(&r.to_polygon()),
-        Geometry::GeometryCollection(gc) => gc.iter().map(stored_vertex_count).sum(),
     }
 }
 
@@ -1606,7 +1549,11 @@ fn validate_kinds<T: FeatureColumn>(kinds: &[PropKind], feature: &TileFeature) -
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "unstable-v2")]
+    use geo_types::{Coord, LineString};
     use geo_types::{Geometry, Point};
+
+    use crate::Vertex;
     use rstest::rstest;
 
     use super::*;
@@ -1666,14 +1613,16 @@ mod tests {
     fn point_feature(properties: Vec<PropValue>) -> TileFeature {
         TileFeature {
             id: None,
-            geometry: Geometry::Point(Point::new(0, 0)),
+            geometry: FeatureGeometry::point(Vertex {
+                x: 0,
+                y: 0,
+                z: None,
+            }),
             properties,
             #[cfg(feature = "unstable-v2")]
             m_values: Vec::new(),
             #[cfg(feature = "unstable-v2")]
             nested: Vec::new(),
-            #[cfg(feature = "unstable-v2")]
-            z: Vec::new(),
         }
     }
 
@@ -1783,9 +1732,9 @@ mod tests {
     #[test]
     fn with_id_is_new_with_that_id() {
         let geometry = Geometry::Point(Point::new(1, 2));
-        let mut expected = TileFeature::new(geometry.clone());
+        let mut expected = TileFeature::new(geometry.clone()).unwrap();
         expected.id = Some(7);
-        assert_eq!(TileFeature::with_id(geometry, 7), expected);
+        assert_eq!(TileFeature::with_id(geometry, 7).unwrap(), expected);
     }
 
     #[cfg(feature = "unstable-v2")]
@@ -1817,7 +1766,7 @@ mod tests {
             ring(&[(0, 0), (0, 4), (4, 4), (4, 0)]),
             vec![ring(&[(1, 1), (1, 2), (2, 2)])],
         );
-        let feature = TileFeature::new(Geometry::Polygon(poly));
+        let feature = TileFeature::new(Geometry::Polygon(poly)).unwrap();
         assert_eq!(feature.vertex_count(), 7);
     }
 
@@ -1979,7 +1928,7 @@ mod tests {
     fn builder_uses_declared_property_kind_for_defaults() {
         let mut builder = TileLayer::builder("layer", 4096).unwrap();
         let flag = builder.add_property("flag", PropKind::Bool).unwrap();
-        let mut feature = builder.feature(Geometry::Point(Point::new(0, 0)));
+        let mut feature = builder.feature(Geometry::Point(Point::new(0, 0))).unwrap();
         feature.property(flag, PropValue::Bool(Some(true))).unwrap();
         feature.finish().unwrap();
         let layer = builder.finish();

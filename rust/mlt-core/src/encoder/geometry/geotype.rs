@@ -1,10 +1,15 @@
 use std::borrow::Cow;
 
 use geo::{Convert as _, TriangulateEarcut as _};
+use geo_traits::GeometryTrait;
 use geo_types::{Coord, Geometry, LineString, Polygon};
 
-use crate::decoder::{GeometryType, GeometryValues};
-use crate::tile::{TileLayer, stored_len};
+use crate::decoder::{GeometryType, GeometryValues, Vertex};
+use crate::feature_geometry::winds_against;
+#[cfg(feature = "unstable-v2")]
+use crate::tile::ZStep;
+use crate::tile::stored_len;
+use crate::{FeatureGeometry, LineRef, MltResult, PolygonRef, TileLayer};
 
 impl TryFrom<&Geometry<i32>> for GeometryType {
     type Error = ();
@@ -27,23 +32,96 @@ impl TryFrom<&Geometry<i32>> for GeometryType {
     }
 }
 
-/// How many coordinates `geom` stores.
-pub(crate) fn coord_count(geom: &Geometry<i32>) -> usize {
-    let polygon = |p: &Polygon<i32>| {
-        p.exterior().0.len() + p.interiors().iter().map(|r| r.0.len()).sum::<usize>()
-    };
-    match geom {
-        Geometry::<i32>::Point(_) => 1,
-        Geometry::<i32>::Line(_) => 2,
-        Geometry::<i32>::LineString(ls) => ls.0.len(),
-        Geometry::<i32>::Polygon(p) => polygon(p),
-        Geometry::<i32>::MultiPoint(mp) => mp.0.len(),
-        Geometry::<i32>::MultiLineString(mls) => mls.0.iter().map(|ls| ls.0.len()).sum(),
-        Geometry::<i32>::MultiPolygon(mp) => mp.0.iter().map(polygon).sum(),
-        Geometry::<i32>::Triangle(_) => 4,
-        Geometry::<i32>::Rect(_) => 5,
-        Geometry::<i32>::GeometryCollection(gc) => gc.0.iter().map(coord_count).sum(),
+/// A run of vertices the encoder reads: a line string's, or a ring's.
+pub(crate) trait VertexSrc: Copy {
+    /// Every vertex, as given.
+    fn len(&self) -> usize;
+    /// The vertices a ring stores: all of them but a closing one.
+    fn stored_ring_len(&self) -> usize;
+    fn vertex(&self, i: usize) -> Vertex;
+    fn xy(&self, i: usize) -> (i32, i32) {
+        let v = self.vertex(i);
+        (v.x, v.y)
     }
+}
+
+/// Coordinates as a [`crate::LayerWriter`] holds them, each ring open or closed.
+impl VertexSrc for &[Coord<i32>] {
+    fn len(&self) -> usize {
+        <[Coord<i32>]>::len(self)
+    }
+
+    fn stored_ring_len(&self) -> usize {
+        stored_len(self)
+    }
+
+    fn vertex(&self, i: usize) -> Vertex {
+        self[i].into()
+    }
+}
+
+/// A part of a [`FeatureGeometry`], whose rings have no closing vertex.
+impl VertexSrc for LineRef<'_> {
+    fn len(&self) -> usize {
+        self.vertex_count()
+    }
+
+    fn stored_ring_len(&self) -> usize {
+        self.vertex_count()
+    }
+
+    fn vertex(&self, i: usize) -> Vertex {
+        LineRef::vertex(self, i)
+    }
+}
+
+/// A ring as the encoder stores it: as given, or reversed after its first vertex so that
+/// it winds as MVT does, counter-clockwise outside and clockwise inside.
+#[derive(Clone, Copy)]
+enum Wound<R> {
+    Plain(R),
+    Reversed(R),
+}
+
+impl<R: VertexSrc> Wound<R> {
+    fn of(ring: R, exterior: bool) -> Self {
+        if needs_reversal(ring, exterior) {
+            Self::Reversed(ring)
+        } else {
+            Self::Plain(ring)
+        }
+    }
+
+    /// The vertices stored, closing vertex excluded.
+    fn stored(&self) -> usize {
+        match self {
+            Self::Plain(r) | Self::Reversed(r) => r.stored_ring_len(),
+        }
+    }
+
+    fn vertex(&self, i: usize) -> Vertex {
+        match self {
+            Self::Plain(r) => r.vertex(i),
+            Self::Reversed(r) => r.vertex(if i == 0 { 0 } else { r.stored_ring_len() - i }),
+        }
+    }
+
+    #[cfg(test)]
+    fn xy_at(&self, i: usize) -> (i32, i32) {
+        let v = self.vertex(i);
+        (v.x, v.y)
+    }
+}
+
+/// Whether the ring winds against the MVT winding of its role, see [`winds_against`].
+fn needs_reversal(ring: impl VertexSrc, exterior: bool) -> bool {
+    let n = ring.stored_ring_len();
+    winds_against((0..n).map(move |i| ring.xy(i)), exterior)
+}
+
+/// The rings of a polygon wound as MVT winds them.
+fn wound<R: VertexSrc>(rings: impl Iterator<Item = R>) -> impl Iterator<Item = Wound<R>> {
+    rings.enumerate().map(|(i, ring)| Wound::of(ring, i == 0))
 }
 
 /// Run the Earcut algorithm on the polygon with these `rings`, exterior first, append triangle
@@ -52,15 +130,15 @@ pub(crate) fn coord_count(geom: &Geometry<i32>) -> usize {
 /// `num_vertices` is how many vertices MLT stores for the polygon, which is where the next one starts.
 /// A ring whose points all lie on a line is left out of the cut, since it holds no triangle and `earcut` can loop forever on one.
 /// Indices are mapped back past it.
-fn earcut_into<'c>(
-    rings: impl Iterator<Item = &'c [Coord<i32>]>,
+fn earcut_into<R: VertexSrc>(
+    rings: impl Iterator<Item = Wound<R>>,
     vertex_offset: u32,
     index_buf: &mut Vec<u32>,
 ) -> (u32, u32) {
-    let rings: Vec<&[Coord<i32>]> = rings.collect();
-    let stored: usize = rings.iter().map(|ring| stored_len(ring)).sum();
+    let rings: Vec<Wound<R>> = rings.collect();
+    let stored: usize = rings.iter().map(Wound::stored).sum();
     let num_vertices = u32::try_from(stored).expect("too many vertices");
-    let Some(exterior) = rings.first().map(|ring| closed(ring)).filter(has_area) else {
+    let Some(exterior) = rings.first().map(|ring| closed(*ring)).filter(has_area) else {
         return (0, num_vertices);
     };
 
@@ -68,14 +146,14 @@ fn earcut_into<'c>(
     let mut holes = Vec::with_capacity(rings.len() - 1);
     let mut stored_starts = Vec::with_capacity(rings.len());
     stored_starts.push(0);
-    let mut stored_start = stored_len(rings[0]);
+    let mut stored_start = rings[0].stored();
     for ring in &rings[1..] {
-        let hole = closed(ring);
+        let hole = closed(*ring);
         if has_area(&hole) {
             holes.push(hole);
             stored_starts.push(stored_start);
         }
-        stored_start += stored_len(ring);
+        stored_start += ring.stored();
     }
     let polygon_f64: Polygon<f64> = Polygon::new(exterior, holes).convert();
     let raw = polygon_f64.earcut_triangles_raw();
@@ -101,11 +179,14 @@ fn earcut_into<'c>(
     (num_triangles, num_vertices)
 }
 
-/// The ring as a closed `geo` ring, whether or not the caller closed it.
-fn closed(ring: &[Coord<i32>]) -> LineString<i32> {
-    let mut ring = LineString::from(ring.to_vec());
-    ring.close();
-    ring
+/// The ring's stored vertices as a closed `geo` ring.
+fn closed(ring: Wound<impl VertexSrc>) -> LineString<i32> {
+    // Room for the closing vertex too, so closing does not reallocate.
+    let mut coords = Vec::with_capacity(ring.stored() + 1);
+    coords.extend((0..ring.stored()).map(|i| Coord::from(ring.vertex(i))));
+    let mut line = LineString(coords);
+    line.close();
+    line
 }
 
 /// Whether a closed ring encloses any area, which one whose points all lie on a line does not.
@@ -127,6 +208,19 @@ fn has_area(ring: &LineString<i32>) -> bool {
     coords.iter().any(|&c| cross(c) != 0)
 }
 
+/// Append `v` to the vertex buffer of a layer with `stride` words per vertex.
+///
+/// A layer with z needs one on every vertex, and a flat layer takes none: either is a
+/// contract violation of [`GeometryValues::push_geom`], so it panics.
+fn push_vertex(verts: &mut Vec<i32>, stride: usize, v: Vertex) {
+    verts.extend([v.x, v.y]);
+    if stride == 3 {
+        verts.push(v.z.expect("a z on every vertex pushed into a layer with z"));
+    } else {
+        assert!(v.z.is_none(), "a z on a vertex pushed into a flat layer");
+    }
+}
+
 impl GeometryValues {
     /// Returns a [`GeometryValues`] with its triangle offsets pre-initialized.
     ///
@@ -141,13 +235,28 @@ impl GeometryValues {
         }
     }
 
+    /// Put the vertices on the z grid `step`, three words each, before any is pushed.
+    ///
+    /// Every geometry pushed afterwards must have z. Panics after a vertex was pushed.
+    #[cfg(feature = "unstable-v2")]
+    #[must_use]
+    pub fn with_z_step(mut self, step: ZStep) -> Self {
+        assert!(
+            self.vertices.as_ref().is_none_or(Vec::is_empty),
+            "with_z_step after vertices were pushed"
+        );
+        self.z_step = Some(step);
+        self
+    }
+
     /// Reserve room for `geoms` more geometries, holding `coords` coordinates between them.
     pub(crate) fn reserve(&mut self, geoms: usize, coords: usize) {
         self.vector_types.reserve(geoms);
         if coords > 0 {
+            let stride = self.stride();
             self.vertices
                 .get_or_insert_with(Vec::new)
-                .reserve(coords * 2);
+                .reserve(coords * stride);
         }
     }
 
@@ -162,13 +271,11 @@ impl GeometryValues {
     ///
     /// Each polygon's indices are shifted past the vertices of the ones before it,
     /// so every index names a vertex of the whole layer.
-    fn tessellate_polygons<'c, R>(
+    fn tessellate_polygons<R: VertexSrc>(
         &mut self,
-        polygons: impl IntoIterator<Item = R>,
+        polygons: impl IntoIterator<Item = impl Iterator<Item = Wound<R>>>,
         first_vertex: u32,
-    ) where
-        R: Iterator<Item = &'c [Coord<i32>]>,
-    {
+    ) {
         if let Some(offsets) = self.triangle_offsets.as_mut() {
             let mut total = *offsets.last().expect("offsets start at 0");
             let mut vertex_offset = first_vertex;
@@ -182,51 +289,49 @@ impl GeometryValues {
         }
     }
 
-    /// Add a geometry to this decoded geometry collection.
-    /// This is the reverse of `to_geojson` - it converts a `&Geometry<i32>`
-    /// into the internal MLT representation with offset arrays.
+    /// The values with `geom` added, see [`Self::push_geom`].
     #[must_use]
-    pub fn with_geom(mut self, geom: &Geometry<i32>) -> Self {
+    pub fn with_geom(mut self, geom: &FeatureGeometry) -> Self {
         self.push_geom(geom);
         self
     }
 
-    /// Add a geometry to this decoded geometry collection (mutable version).
+    /// Add a feature's geometry, which is the reverse of [`Self::geometry`].
     ///
-    /// Its vertices are `(x, y)` pairs, so it must come before [`Self::add_z`].
-    pub fn push_geom(&mut self, geom: &Geometry<i32>) {
-        #[cfg(feature = "unstable-v2")]
-        debug_assert!(self.z_step.is_none(), "push_geom after add_z");
-        match geom {
-            Geometry::<i32>::Point(p) => self.push_point(p.0),
-            Geometry::<i32>::Line(l) => self.push_linestring(&[l.start, l.end]),
-            Geometry::<i32>::LineString(ls) => self.push_linestring(&ls.0),
-            Geometry::<i32>::Polygon(p) => self.push_polygon(rings(p)),
-            Geometry::<i32>::MultiPoint(mp) => self.push_multi_point(mp.0.iter().map(|p| p.0)),
-            Geometry::<i32>::MultiLineString(mls) => {
-                self.push_multi_linestring(mls.0.iter().map(|ls| ls.0.as_slice()));
+    /// Polygon rings are stored wound as MVT winds them. The geometry's dimension must
+    /// match the layer's: z on every vertex after [`Self::with_z_step`], none otherwise;
+    /// a mismatch panics. An empty geometry fits either.
+    pub fn push_geom(&mut self, geom: &FeatureGeometry) {
+        match geom.geometry_type() {
+            GeometryType::Point => {
+                self.push_point(geom.first_vertex().expect("a point has a vertex"));
             }
-            Geometry::<i32>::MultiPolygon(mp) => self.push_multi_polygon(mp.0.iter().map(rings)),
-            Geometry::<i32>::Triangle(t) => self.push_polygon(rings(&t.to_polygon())),
-            Geometry::<i32>::Rect(r) => self.push_polygon(rings(&r.to_polygon())),
-            Geometry::<i32>::GeometryCollection(gc) => {
-                for g in gc {
-                    self.push_geom(g);
-                }
+            GeometryType::LineString => self.push_linestring(geom.line_ref()),
+            GeometryType::Polygon => self.push_polygon(geom.polygon_at(0).stored_rings()),
+            GeometryType::MultiPoint => self.push_multi_point(geom.vertices()),
+            GeometryType::MultiLineString => self.push_multi_linestring(geom.line_refs()),
+            GeometryType::MultiPolygon => {
+                self.push_multi_polygon(geom.polygon_refs().map(PolygonRef::stored_rings));
             }
         }
     }
 
-    pub(crate) fn push_point(&mut self, coord: Coord<i32>) {
-        self.vector_types.push(GeometryType::Point);
-        self.vertices
-            .get_or_insert_with(Vec::new)
-            .extend([coord.x, coord.y]);
+    /// Add any geometry, as [`FeatureGeometry::from_geometry`] normalises it.
+    pub fn push_geometry(&mut self, geom: &impl GeometryTrait<T = i32>) -> MltResult<()> {
+        self.push_geom(&FeatureGeometry::from_geometry(geom)?);
+        Ok(())
     }
 
-    pub(crate) fn push_linestring(&mut self, line: &[Coord<i32>]) {
+    pub(crate) fn push_point(&mut self, vertex: Vertex) {
+        self.vector_types.push(GeometryType::Point);
+        let stride = self.stride();
+        push_vertex(self.vertices.get_or_insert_with(Vec::new), stride, vertex);
+    }
+
+    pub(crate) fn push_linestring(&mut self, line: impl VertexSrc) {
         self.vector_types.push(GeometryType::LineString);
 
+        let stride = self.stride();
         let verts = self.vertices.get_or_insert_with(Vec::new);
         // If ring_offsets exists (i.e., there's a Polygon in the layer),
         // add LineString vertex count to ring_offsets instead of part_offsets.
@@ -236,23 +341,11 @@ impl GeometryValues {
             .as_mut()
             .unwrap_or_else(|| self.part_offsets.get_or_insert_with(Vec::new));
 
-        push_linestrings(std::iter::once(line), verts, offsets);
+        push_linestrings(std::iter::once(line), verts, stride, offsets);
     }
 
     /// Add a polygon given as its rings, exterior first, each open or closed.
-    pub(crate) fn push_polygon<'c>(
-        &mut self,
-        rings: impl Iterator<Item = &'c [Coord<i32>]> + Clone,
-    ) {
-        if any_reversal(rings.clone()) {
-            let rings = wound(rings);
-            self.push_wound_polygon(rings.iter().map(AsRef::as_ref));
-        } else {
-            self.push_wound_polygon(rings);
-        }
-    }
-
-    fn push_wound_polygon<'c>(&mut self, rings: impl Iterator<Item = &'c [Coord<i32>]> + Clone) {
+    pub(crate) fn push_polygon<R: VertexSrc>(&mut self, rings: impl Iterator<Item = R> + Clone) {
         // Only on the very first polygon: if LineStrings were pushed before us,
         // their vertex offsets are sitting in part_offsets. Move them to
         // ring_offsets now, before we set up ring_offsets for polygon use.
@@ -262,12 +355,13 @@ impl GeometryValues {
         self.init_polygon_offsets();
         let first_vertex = self.stored_vertex_count();
 
+        let stride = self.stride();
         let verts = self.vertices.get_or_insert_with(Vec::new);
         let ring_offsets = self.ring_offsets.as_mut().unwrap();
         let parts = self.part_offsets.as_mut().unwrap();
 
-        push_polygon_rings(rings.clone(), verts, ring_offsets, parts);
-        self.tessellate_polygons([rings], first_vertex);
+        push_polygon_rings(wound(rings.clone()), verts, stride, ring_offsets, parts);
+        self.tessellate_polygons([wound(rings)], first_vertex);
     }
 
     /// Initialize offset arrays for polygon storage. On the first polygon,
@@ -282,22 +376,23 @@ impl GeometryValues {
         init_offsets(self.part_offsets.get_or_insert_with(Vec::new));
     }
 
-    pub(crate) fn push_multi_point(&mut self, points: impl Iterator<Item = Coord<i32>>) {
+    pub(crate) fn push_multi_point(&mut self, points: impl Iterator<Item = Vertex>) {
         self.vector_types.push(GeometryType::MultiPoint);
 
+        let stride = self.stride();
         let verts = self.vertices.get_or_insert_with(Vec::new);
         let mut count = 0_u32;
         for point in points {
-            verts.extend([point.x, point.y]);
+            push_vertex(verts, stride, point);
             count += 1;
         }
 
         self.push_geometry_count(count);
     }
 
-    pub(crate) fn push_multi_linestring<'c>(
+    pub(crate) fn push_multi_linestring(
         &mut self,
-        lines: impl ExactSizeIterator<Item = &'c [Coord<i32>]>,
+        lines: impl ExactSizeIterator<Item = impl VertexSrc>,
     ) {
         self.vector_types.push(GeometryType::MultiLineString);
         let count = u32::try_from(lines.len()).expect("linestring count overflow");
@@ -305,6 +400,7 @@ impl GeometryValues {
         // An empty multi contributes no part, so it must not bring a part level into
         // existence either: the offset arrays a layer has must be ones it fills.
         if count > 0 {
+            let stride = self.stride();
             let verts = self.vertices.get_or_insert_with(Vec::new);
             // When a Polygon is present (ring_offsets exists), LineString vertex counts
             // go to ring_offsets instead of part_offsets. This matches Java's behavior.
@@ -313,35 +409,17 @@ impl GeometryValues {
                 .as_mut()
                 .unwrap_or_else(|| self.part_offsets.get_or_insert_with(Vec::new));
 
-            push_linestrings(lines, verts, offsets);
+            push_linestrings(lines, verts, stride, offsets);
         }
 
         self.push_geometry_count(count);
     }
 
     /// Add polygons, each given as its rings like [`Self::push_polygon`].
-    pub(crate) fn push_multi_polygon<'c, R>(
+    pub(crate) fn push_multi_polygon<R: VertexSrc>(
         &mut self,
-        polygons: impl ExactSizeIterator<Item = R> + Clone,
-    ) where
-        R: Iterator<Item = &'c [Coord<i32>]>,
-    {
-        if polygons.clone().any(any_reversal) {
-            let polygons: Vec<_> = polygons.map(wound).collect();
-            self.push_wound_multi_polygon(
-                polygons.iter().map(|rings| rings.iter().map(AsRef::as_ref)),
-            );
-        } else {
-            self.push_wound_multi_polygon(polygons);
-        }
-    }
-
-    fn push_wound_multi_polygon<'c, R>(
-        &mut self,
-        polygons: impl ExactSizeIterator<Item = R> + Clone,
-    ) where
-        R: Iterator<Item = &'c [Coord<i32>]>,
-    {
+        polygons: impl ExactSizeIterator<Item = impl Iterator<Item = R> + Clone> + Clone,
+    ) {
         self.vector_types.push(GeometryType::MultiPolygon);
         let first_vertex = self.stored_vertex_count();
         let count = u32::try_from(polygons.len()).expect("polygon count overflow");
@@ -353,17 +431,18 @@ impl GeometryValues {
         if count > 0 {
             self.init_polygon_offsets();
 
+            let stride = self.stride();
             let verts = self.vertices.get_or_insert_with(Vec::new);
             let ring_offsets = self.ring_offsets.as_mut().unwrap();
             let parts = self.part_offsets.as_mut().unwrap();
 
             for rings in polygons.clone() {
-                push_polygon_rings(rings, verts, ring_offsets, parts);
+                push_polygon_rings(wound(rings), verts, stride, ring_offsets, parts);
             }
         }
 
         self.push_geometry_count(count);
-        self.tessellate_polygons(polygons, first_vertex);
+        self.tessellate_polygons(polygons.map(wound), first_vertex);
     }
 
     /// Initialize and update `geometry_offsets` with a sub-geometry count.
@@ -374,153 +453,26 @@ impl GeometryValues {
     }
 }
 
-/// The rings of a polygon, exterior first.
-fn rings(polygon: &Polygon<i32>) -> impl Iterator<Item = &[Coord<i32>]> + Clone {
-    std::iter::once(polygon.exterior().0.as_slice())
-        .chain(polygon.interiors().iter().map(|ring| ring.0.as_slice()))
-}
-
-/// Whether any ring of the polygon winds against MVT.
-fn any_reversal<'c>(rings: impl Iterator<Item = &'c [Coord<i32>]>) -> bool {
-    rings
-        .enumerate()
-        .any(|(i, ring)| needs_reversal(ring, i == 0))
-}
-
-/// The rings of a polygon wound as MVT winds them: counter-clockwise exterior, clockwise holes.
-///
-/// A reversed ring keeps its first vertex, and its closing one if it had one.
-fn wound<'c>(rings: impl Iterator<Item = &'c [Coord<i32>]>) -> Vec<Cow<'c, [Coord<i32>]>> {
-    rings
-        .enumerate()
-        .map(|(i, ring)| {
-            if !needs_reversal(ring, i == 0) {
-                return Cow::Borrowed(ring);
-            }
-            let (stored, closing) = ring.split_at(stored_len(ring));
-            let mut reversed = Vec::with_capacity(ring.len());
-            reversed.extend(stored.first());
-            reversed.extend(stored.iter().skip(1).rev());
-            reversed.extend(closing);
-            Cow::Owned(reversed)
-        })
-        .collect()
-}
-
 /// The layer with its polygon rings wound as the encoder stores them, and the values held per vertex moved along.
 #[must_use]
 pub fn wound_layer(layer: &TileLayer) -> TileLayer {
     let mut layer = layer.clone();
     for feature in &mut layer.features {
         #[cfg(feature = "unstable-v2")]
-        if let Some(order) = wound_vertex_order(&feature.geometry) {
-            if order.len() == feature.z.len() {
-                feature.z = order.iter().map(|&i| feature.z[i]).collect();
-            }
+        if let Some(order) = feature.geometry.wound_vertex_order() {
             for m_value in &mut feature.m_values {
                 m_value.reorder(&order);
             }
         }
-        feature.geometry = wound_geometry(&feature.geometry);
+        let wound = match feature.geometry.wound() {
+            Cow::Owned(wound) => Some(wound),
+            Cow::Borrowed(_) => None,
+        };
+        if let Some(wound) = wound {
+            feature.geometry = wound;
+        }
     }
     layer
-}
-
-/// The geometry with its polygon rings wound as the encoder stores them.
-#[must_use]
-pub fn wound_geometry(geom: &Geometry<i32>) -> Geometry<i32> {
-    let polygon = |p: &Polygon<i32>| {
-        let mut rings = wound(rings(p))
-            .into_iter()
-            .map(|ring| LineString::from(ring.into_owned()));
-        let exterior = rings.next().unwrap_or_else(|| LineString::new(vec![]));
-        Polygon::new(exterior, rings.collect())
-    };
-    match geom {
-        Geometry::<i32>::Polygon(p) => Geometry::Polygon(polygon(p)),
-        Geometry::<i32>::MultiPolygon(mp) => {
-            Geometry::MultiPolygon(mp.0.iter().map(polygon).collect())
-        }
-        Geometry::<i32>::GeometryCollection(gc) => {
-            Geometry::GeometryCollection(gc.0.iter().map(wound_geometry).collect())
-        }
-        other @ (Geometry::<i32>::Point(_)
-        | Geometry::<i32>::Line(_)
-        | Geometry::<i32>::LineString(_)
-        | Geometry::<i32>::MultiPoint(_)
-        | Geometry::<i32>::MultiLineString(_)
-        | Geometry::<i32>::Rect(_)
-        | Geometry::<i32>::Triangle(_)) => other.clone(),
-    }
-}
-
-/// Whether the ring, open or closed, winds against the MVT winding of its role.
-///
-/// The winding is the sign of the ring's area by the surveyor's formula, as MVT defines it.
-/// A ring of zero area has no winding.
-/// Reversing a ring negates its area, so a wound ring is never reversed again.
-/// The area is summed on `i128`, since `i32` products overflow.
-fn needs_reversal(ring: &[Coord<i32>], exterior: bool) -> bool {
-    let ring = &ring[..stored_len(ring)];
-    let next = ring.iter().cycle().skip(1);
-    let area: i128 = ring
-        .iter()
-        .zip(next)
-        .map(|(a, b)| i128::from(a.x) * i128::from(b.y) - i128::from(b.x) * i128::from(a.y))
-        .sum();
-    if exterior { area < 0 } else { area > 0 }
-}
-
-/// Where each stored vertex of the geometry ends up once its polygon rings are wound.
-///
-/// Entry `i` is the input position of the vertex stored at `i`, so a value held per vertex follows by reading its run through the entries.
-/// Is [`None`] when no ring is reversed.
-#[cfg(feature = "unstable-v2")]
-pub(crate) fn wound_vertex_order(geom: &Geometry<i32>) -> Option<Vec<usize>> {
-    fn plain(order: &mut Vec<usize>, len: usize) {
-        order.extend(order.len()..order.len() + len);
-    }
-    fn polygon(order: &mut Vec<usize>, reversed: &mut bool, polygon: &Polygon<i32>) {
-        for (i, ring) in rings(polygon).enumerate() {
-            let start = order.len();
-            let end = start + stored_len(ring);
-            if needs_reversal(ring, i == 0) {
-                *reversed = true;
-                // Reversing the closed ring leaves its first vertex where it was.
-                order.extend((start..end.min(start + 1)).chain((start + 1..end).rev()));
-            } else {
-                order.extend(start..end);
-            }
-        }
-    }
-    fn walk(order: &mut Vec<usize>, reversed: &mut bool, geom: &Geometry<i32>) {
-        match geom {
-            Geometry::<i32>::Point(_) => plain(order, 1),
-            Geometry::<i32>::Line(_) => plain(order, 2),
-            Geometry::<i32>::LineString(ls) => plain(order, ls.0.len()),
-            Geometry::<i32>::MultiPoint(mp) => plain(order, mp.0.len()),
-            Geometry::<i32>::MultiLineString(mls) => {
-                plain(order, mls.0.iter().map(|ls| ls.0.len()).sum());
-            }
-            Geometry::<i32>::Polygon(p) => polygon(order, reversed, p),
-            Geometry::<i32>::MultiPolygon(mp) => {
-                for p in &mp.0 {
-                    polygon(order, reversed, p);
-                }
-            }
-            Geometry::<i32>::Triangle(t) => polygon(order, reversed, &t.to_polygon()),
-            Geometry::<i32>::Rect(r) => polygon(order, reversed, &r.to_polygon()),
-            Geometry::<i32>::GeometryCollection(gc) => {
-                for g in gc {
-                    walk(order, reversed, g);
-                }
-            }
-        }
-    }
-    let mut order = Vec::new();
-    let mut reversed = false;
-    walk(&mut order, &mut reversed, geom);
-    reversed.then_some(order)
 }
 
 /// Ensure offset array starts with 0.
@@ -531,41 +483,47 @@ fn init_offsets(v: &mut Vec<u32>) {
 }
 
 /// Push a single polygon's rings (exterior + interiors) to the offset arrays.
-/// MLT omits closing vertices, so we strip them if present.
-fn push_polygon_rings<'c>(
-    polygon: impl Iterator<Item = &'c [Coord<i32>]>,
+fn push_polygon_rings<R: VertexSrc>(
+    polygon: impl Iterator<Item = Wound<R>>,
     verts: &mut Vec<i32>,
+    stride: usize,
     rings: &mut Vec<u32>,
     parts: &mut Vec<u32>,
 ) {
     let mut ring_count = *parts.last().unwrap();
     for ring in polygon {
-        push_ring(ring, verts, rings);
+        push_ring(ring, verts, stride, rings);
         ring_count += 1;
     }
     parts.push(ring_count);
 }
 
-/// Push a ring's coordinates (stripping closing vertex) to verts and update rings offset.
-fn push_ring(ring: &[Coord<i32>], verts: &mut Vec<i32>, rings: &mut Vec<u32>) {
-    let len = stored_len(ring);
-    for c in &ring[..len] {
-        verts.extend([c.x, c.y]);
+/// Push a ring's stored vertices to verts and update the rings offset.
+fn push_ring<R: VertexSrc>(
+    ring: Wound<R>,
+    verts: &mut Vec<i32>,
+    stride: usize,
+    rings: &mut Vec<u32>,
+) {
+    let len = ring.stored();
+    for i in 0..len {
+        push_vertex(verts, stride, ring.vertex(i));
     }
     let prev = *rings.last().unwrap();
     rings.push(prev + u32::try_from(len).expect("vertex count overflow"));
 }
 
 /// Push linestrings to vertex buffer and offset array.
-fn push_linestrings<'a>(
-    iter: impl Iterator<Item = &'a [Coord<i32>]>,
+fn push_linestrings(
+    iter: impl Iterator<Item = impl VertexSrc>,
     verts: &mut Vec<i32>,
+    stride: usize,
     offsets: &mut Vec<u32>,
 ) {
     init_offsets(offsets);
     for ls in iter {
-        for c in ls {
-            verts.extend([c.x, c.y]);
+        for i in 0..ls.len() {
+            push_vertex(verts, stride, ls.vertex(i));
         }
         let prev = *offsets.last().unwrap();
         offsets.push(prev + u32::try_from(ls.len()).expect("vertex count overflow"));
@@ -580,6 +538,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+    use geo_traits::to_geo::ToGeoGeometry as _;
 
     fn wound_rings(rings: &[&[(i32, i32)]]) -> Vec<Vec<(i32, i32)>> {
         let rings: Vec<Vec<Coord<i32>>> = rings
@@ -587,8 +546,7 @@ mod tests {
             .map(|ring| ring.iter().map(|&(x, y)| Coord { x, y }).collect())
             .collect();
         wound(rings.iter().map(Vec::as_slice))
-            .iter()
-            .map(|ring| ring.iter().map(|c| (c.x, c.y)).collect())
+            .map(|ring| (0..ring.stored()).map(|i| ring.xy_at(i)).collect())
             .collect()
     }
 
@@ -596,7 +554,10 @@ mod tests {
     fn wound_geometry_rewinds_every_polygon_of_a_multi_polygon() {
         let against = wkt! { MULTIPOLYGON(((0 0,0 9,9 9,9 0,0 0),(2 2,3 2,3 3,2 3,2 2))) };
         assert_eq!(
-            wound_geometry(&Geometry::MultiPolygon(against)),
+            FeatureGeometry::from_geometry(&Geometry::MultiPolygon(against))
+                .unwrap()
+                .wound()
+                .to_geometry(),
             Geometry::MultiPolygon(
                 wkt! { MULTIPOLYGON(((0 0,9 0,9 9,0 9,0 0),(2 2,2 3,3 3,3 2,2 2))) }
             )
@@ -611,22 +572,22 @@ mod tests {
                 &[(2, 2), (2, 3), (3, 3), (3, 2), (2, 2)],
             ]),
             [
-                vec![(0, 0), (9, 0), (9, 9), (0, 9), (0, 0)],
-                vec![(2, 2), (2, 3), (3, 3), (3, 2), (2, 2)],
+                vec![(0, 0), (9, 0), (9, 9), (0, 9)],
+                vec![(2, 2), (2, 3), (3, 3), (3, 2)],
             ]
         );
     }
 
     #[test]
-    fn rings_wound_against_mvt_are_reversed_and_stay_closed() {
+    fn rings_wound_against_mvt_are_reversed_and_keep_their_first_vertex() {
         assert_eq!(
             wound_rings(&[
                 &[(0, 0), (0, 9), (9, 9), (9, 0), (0, 0)],
                 &[(2, 2), (3, 2), (3, 3), (2, 3), (2, 2)],
             ]),
             [
-                vec![(0, 0), (9, 0), (9, 9), (0, 9), (0, 0)],
-                vec![(2, 2), (2, 3), (3, 3), (3, 2), (2, 2)],
+                vec![(0, 0), (9, 0), (9, 9), (0, 9)],
+                vec![(2, 2), (2, 3), (3, 3), (3, 2)],
             ]
         );
     }
@@ -676,7 +637,7 @@ mod tests {
     fn a_ring_with_no_area_keeps_its_direction() {
         assert_eq!(
             wound_rings(&[&[(0, 0), (4, 4), (8, 8), (0, 0)]]),
-            [vec![(0, 0), (4, 4), (8, 8), (0, 0)]]
+            [vec![(0, 0), (4, 4), (8, 8)]]
         );
     }
 
@@ -725,7 +686,7 @@ mod tests {
     fn roundtrip_via_push(geoms: &[Geometry<i32>]) -> (GeometryValues, GeometryValues) {
         let mut pushed = GeometryValues::default();
         for g in geoms {
-            pushed.push_geom(g);
+            pushed.push_geometry(g).unwrap();
         }
         let canonical = roundtrip(&pushed);
         let output = roundtrip(&canonical);
@@ -1045,7 +1006,7 @@ mod tests {
             let exterior = LineString::from(vec![(0_i32, 0), (10, 0), (10, 10), (0, 10), (0, 0)]);
             let polygon = Polygon::new(exterior, vec![]);
             let mut g = GeometryValues::new_tessellated();
-            g.push_geom(&Geometry::<i32>::Polygon(polygon));
+            g.push_geometry(&Geometry::<i32>::Polygon(polygon)).unwrap();
             let tris = g.triangle_offsets().expect("triangle offsets");
             let n = tris[1];
             assert!(n > 0, "expected at least one triangle");
@@ -1062,9 +1023,10 @@ mod tests {
             let exterior2 = LineString::from(vec![(20, 0), (30, 0), (30, 10), (20, 10), (20, 0)]);
             let poly2 = Polygon::new(exterior2, vec![]);
             let mut g = GeometryValues::new_tessellated();
-            g.push_geom(&Geometry::<i32>::MultiPolygon(MultiPolygon(vec![
+            g.push_geometry(&Geometry::<i32>::MultiPolygon(MultiPolygon(vec![
                 poly1, poly2,
-            ])));
+            ])))
+            .unwrap();
             let ib = g.index_buffer().expect("index buffer");
             let tris = g.triangle_offsets().expect("triangle offsets");
             assert_eq!(tris.len(), 2);
@@ -1092,7 +1054,7 @@ mod tests {
 
         fn triangles(geometry: &Geometry<i32>) -> Vec<u32> {
             let mut g = GeometryValues::new_tessellated();
-            g.push_geom(geometry);
+            g.push_geometry(geometry).unwrap();
             g.index_buffer().unwrap_or_default().to_vec()
         }
 
@@ -1175,29 +1137,34 @@ mod tests {
         #[case] equivalent: Geometry<i32>,
     ) {
         assert_eq!(
-            GeometryValues::default().with_geom(&geometry),
-            GeometryValues::default().with_geom(&equivalent)
+            GeometryValues::default()
+                .with_geom(&FeatureGeometry::from_geometry(&geometry).unwrap()),
+            GeometryValues::default()
+                .with_geom(&FeatureGeometry::from_geometry(&equivalent).unwrap())
         );
     }
 
     #[test]
-    fn a_geometry_collection_pushes_each_member_as_a_feature() {
+    fn a_geometry_collection_is_not_one_feature() {
         let point: Geometry<i32> = wkt!(POINT(1 2)).into();
-        let line: Geometry<i32> = wkt!(LINESTRING(0 0, 5 5)).into();
-        let collection = Geometry::GeometryCollection(geo_types::GeometryCollection(vec![
-            point.clone(),
-            line.clone(),
-        ]));
-        assert_eq!(
-            GeometryValues::default().with_geom(&collection),
-            GeometryValues::default().with_geom(&point).with_geom(&line)
+        let collection = Geometry::GeometryCollection(geo_types::GeometryCollection(vec![point]));
+        let err = GeometryValues::default()
+            .push_geometry(&collection)
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::MltError::GeometryCollectionUnsupported),
+            "{err}"
         );
     }
 
     #[test]
     fn a_multi_polygon_fills_every_offset_level() {
         let geometry = GeometryValues::default().with_geom(
-            &wkt!(MULTIPOLYGON(((0 0, 5 0, 0 5, 0 0)), ((10 10, 15 10, 10 15, 10 10)))).into(),
+            &FeatureGeometry::from_geometry(&Geometry::<i32>::from(wkt!(MULTIPOLYGON(
+                ((0 0, 5 0, 0 5, 0 0)),
+                ((10 10, 15 10, 10 15, 10 10))
+            ))))
+            .unwrap(),
         );
         assert_snapshot!(
             format!(

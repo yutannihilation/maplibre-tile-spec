@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -7,11 +8,11 @@ use std::path::Path;
 use mlt_core::encoder::{
     Codecs, ColumnKind, Encoder, EncoderConfig, ExplicitEncoder, FloatEncoding, IntEncoder,
     Presence, StagedId, StagedLayer, StagedMValue, StagedNested, StagedProperty, StagedSharedDict,
-    StrEncoding, StreamCtx, VertexBufferType, WireVersion, wound_geometry,
+    StrEncoding, StreamCtx, VertexBufferType, WireVersion,
 };
 use mlt_core::geo_types::{Coord, Geometry};
 use mlt_core::wire::{LengthType, OffsetType, StreamType};
-use mlt_core::{GeometryValues, ZStep};
+use mlt_core::{FeatureGeometry, GeometryValues, ZStep};
 
 use crate::writer::{SynthErr, SynthResult, SynthWriter};
 
@@ -342,9 +343,9 @@ impl Layer {
     #[track_caller]
     pub fn geo(mut self, geometry: impl Into<Geometry<i32>>) -> Self {
         let geometry = geometry.into();
-        assert_eq!(
-            wound_geometry(&geometry),
-            geometry,
+        let feature = FeatureGeometry::from_geometry(&geometry).expect("a feature geometry");
+        assert!(
+            matches!(feature.wound(), Cow::Borrowed(_)),
             "a synthetic polygon must be wound as MVT winds it"
         );
         self.geometry_items.push(geometry);
@@ -732,7 +733,7 @@ impl Layer {
             GeometryValues::default()
         };
         for geom in &geometry_items {
-            geometry.push_geom(geom);
+            geometry.push_geometry(geom)?;
         }
         if let Some((step, z)) = z {
             geometry.add_z(step, &z)?;

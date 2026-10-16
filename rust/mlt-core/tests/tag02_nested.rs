@@ -115,7 +115,7 @@ fn nested_layer(
     let mut builder = TileLayer::builder("nested", 4096).expect("builder");
     let key = builder.add_nested("n", kind).expect("add_nested");
     for (geometry, value) in geometries.iter().zip(values) {
-        let mut feature = builder.feature(geometry.clone());
+        let mut feature = builder.feature(geometry.clone()).unwrap();
         feature.nested(key, value.clone()).expect("set_nested");
         feature.finish().expect("push");
     }
@@ -401,7 +401,9 @@ fn a_nested_root_shares_a_bitfield_with_a_flat_column() {
         .add_nested("n", map_kind(&[("a", leaf(PropKind::I32))]))
         .expect("add_nested");
     for (index, present) in [true, false, true].into_iter().enumerate() {
-        let mut feature = builder.feature(point(i32::try_from(index).expect("small"), 0));
+        let mut feature = builder
+            .feature(point(i32::try_from(index).expect("small"), 0))
+            .unwrap();
         if present {
             feature
                 .property(flat, PropValue::I32(Some(1)))
@@ -449,7 +451,7 @@ fn m_values_and_a_nested_column_live_in_one_layer() {
         .add_nested("n", NestedKind::list(leaf(PropKind::Str)))
         .expect("add_nested");
     for i in 0..2 {
-        let mut feature = builder.feature(line(&[(0, i), (1, i)]));
+        let mut feature = builder.feature(line(&[(0, i), (1, i)])).unwrap();
         feature
             .m_value(m, mlt_core::MValue::I32(Some(vec![i, i + 1])))
             .expect("m_value");
@@ -695,7 +697,7 @@ fn a_nested_column_in_the_m_value_section_is_rejected() {
         .add_m_value("m", PropKind::I32)
         .expect("add_m_value");
     for i in 0..2 {
-        let mut feature = builder.feature(line(&[(0, i), (1, i)]));
+        let mut feature = builder.feature(line(&[(0, i), (1, i)])).unwrap();
         feature
             .m_value(m, mlt_core::MValue::I32(Some(vec![i, i + 1])))
             .expect("m_value");
@@ -784,7 +786,7 @@ fn a_nested_name_that_repeats_a_property_column_on_the_wire_is_rejected() {
         .add_nested("nest", map_kind(&[("a", leaf(PropKind::I32))]))
         .expect("add_nested");
     for i in 0..2 {
-        let mut feature = builder.feature(point(i, i));
+        let mut feature = builder.feature(point(i, i)).unwrap();
         feature
             .property(flat, PropValue::I32(Some(i)))
             .expect("property");
@@ -815,7 +817,7 @@ fn an_m_value_name_that_repeats_a_nested_column_is_rejected() {
         .add_nested("nest", NestedKind::list(leaf(PropKind::Str)))
         .expect("add_nested");
     for i in 0..2 {
-        let mut feature = builder.feature(line(&[(0, i), (1, i)]));
+        let mut feature = builder.feature(line(&[(0, i), (1, i)])).unwrap();
         feature
             .m_value(m, mlt_core::MValue::I32(Some(vec![i, i + 1])))
             .expect("m_value");

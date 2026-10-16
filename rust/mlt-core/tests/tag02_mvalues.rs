@@ -129,7 +129,7 @@ fn layer(geoms: Vec<Geometry<i32>>, columns: &[(&str, Vec<MValue>)]) -> TileLaye
         .map(|(name, values)| builder.add_m_value(*name, values[0].kind()).unwrap())
         .collect();
     for (index, geom) in geoms.into_iter().enumerate() {
-        let mut feature = builder.feature(geom);
+        let mut feature = builder.feature(geom).unwrap();
         for (key, (_, values)) in keys.iter().zip(columns) {
             feature.m_value(*key, values[index].clone()).unwrap();
         }
@@ -367,7 +367,7 @@ fn an_m_value_column_shares_a_bitfield_with_a_property_column() {
     let m = builder.add_m_value("m", PropKind::I32).unwrap();
     for (index, present) in [true, false, true].into_iter().enumerate() {
         let geom = line(&[(0, i32::try_from(index).unwrap()), (1, 1)]);
-        let mut feature = builder.feature(geom);
+        let mut feature = builder.feature(geom).unwrap();
         feature
             .property(prop, PropValue::U32(present.then_some(1)))
             .unwrap();
@@ -394,7 +394,7 @@ fn an_m_value_column_shares_a_bitfield_with_a_property_column() {
 fn m_values_on_a_point_layer_are_rejected() {
     let mut builder = TileLayer::builder("test_layer", 4096).unwrap();
     let m = builder.add_m_value("m", PropKind::I32).unwrap();
-    let mut feature = builder.feature(Geometry::Point(Point::new(1, 2)));
+    let mut feature = builder.feature(Geometry::Point(Point::new(1, 2))).unwrap();
     feature.m_value(m, MValue::I32(Some(vec![5]))).unwrap();
     feature.finish().unwrap();
 
@@ -444,7 +444,7 @@ fn a_layer_with_m_values_cannot_be_written_as_v1() {
 fn a_column_holding_the_wrong_number_of_values_is_rejected() {
     let mut builder = TileLayer::builder("test_layer", 4096).unwrap();
     let m = builder.add_m_value("m", PropKind::I32).unwrap();
-    let mut feature = builder.feature(line(&[(0, 0), (1, 1), (2, 2)]));
+    let mut feature = builder.feature(line(&[(0, 0), (1, 1), (2, 2)])).unwrap();
     let err = feature
         .m_value(m, MValue::I32(Some(vec![1, 2])))
         .err()
@@ -466,7 +466,7 @@ fn a_column_holding_the_wrong_number_of_values_is_rejected() {
 fn a_column_of_the_wrong_kind_is_rejected() {
     let mut builder = TileLayer::builder("test_layer", 4096).unwrap();
     let m = builder.add_m_value("m", PropKind::I32).unwrap();
-    let mut feature = builder.feature(line(&[(0, 0), (1, 1)]));
+    let mut feature = builder.feature(line(&[(0, 0), (1, 1)])).unwrap();
     let err = feature
         .m_value(m, MValue::U32(Some(vec![1, 2])))
         .err()
@@ -623,7 +623,7 @@ fn property_and_m_value_layer() -> TileLayer {
     let mut builder = TileLayer::builder("test_layer", 4096).unwrap();
     let prop = builder.add_property("prop", PropKind::I32).unwrap();
     let m = builder.add_m_value("mval", PropKind::I32).unwrap();
-    let mut feature = builder.feature(line(&[(0, 0), (1, 1)]));
+    let mut feature = builder.feature(line(&[(0, 0), (1, 1)])).unwrap();
     feature.property(prop, PropValue::I32(Some(7))).unwrap();
     feature.m_value(m, MValue::I32(Some(vec![1, 2]))).unwrap();
     feature.finish().unwrap();
@@ -647,7 +647,7 @@ fn a_property_name_that_repeats_another_property_column_on_the_wire_is_rejected(
     let mut builder = TileLayer::builder("test_layer", 4096).unwrap();
     let first = builder.add_property("aaaa", PropKind::I32).unwrap();
     let second = builder.add_property("bbbb", PropKind::I32).unwrap();
-    let mut feature = builder.feature(line(&[(0, 0), (1, 1)]));
+    let mut feature = builder.feature(line(&[(0, 0), (1, 1)])).unwrap();
     feature.property(first, PropValue::I32(Some(1))).unwrap();
     feature.property(second, PropValue::I32(Some(2))).unwrap();
     feature.finish().unwrap();
@@ -690,7 +690,9 @@ fn encode_dictionary_vertex_layer() -> Vec<u8> {
     let mut geometry = GeometryValues::default();
     // Two lines over the same three vertices, so the dictionary holds three of six.
     for _ in 0..2 {
-        geometry.push_geom(&line(&[(0, 0), (8, 8), (16, 16)]));
+        geometry
+            .push_geometry(&line(&[(0, 0), (8, 8), (16, 16)]))
+            .unwrap();
     }
     let m_value = StagedMValue::new("m", None, StagedValues::I32(vec![1, 2, 3, 4, 5, 6]));
     let staged = StagedLayer::with_m_values(

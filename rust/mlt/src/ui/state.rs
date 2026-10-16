@@ -412,6 +412,11 @@ impl App {
         &self.tile.fc.features[self.global_idx(layer, feat)]
     }
 
+    /// The feature's geometry as geo-types, which the renderer and its helpers read.
+    pub(crate) fn geometry(&self, layer: usize, feat: usize) -> &Geometry<i32> {
+        &self.tile.geometries[self.global_idx(layer, feat)]
+    }
+
     /// Tessellation triangles of a feature, one list per polygon part, if the tile stores them.
     pub(crate) fn tessellation(&self, layer: usize, feat: usize) -> Option<&Tessellation> {
         self.tile.triangles[self.global_idx(layer, feat)].as_ref()
@@ -441,7 +446,7 @@ impl App {
                     feat: fi,
                 });
                 if self.expanded_features.contains(&(li, fi)) {
-                    for part in 0..multi_part_count(&self.tile.fc.features[gi].geometry) {
+                    for part in 0..multi_part_count(&self.tile.geometries[gi]) {
                         self.tree_items.push(TreeItem::SubFeature {
                             layer: li,
                             feat: fi,
@@ -457,7 +462,7 @@ impl App {
         let mut entries: Vec<GeometryIndexEntry> = Vec::new();
         for (li, group) in self.layer_groups.iter().enumerate() {
             for (fi, &gi) in group.feature_indices.iter().enumerate() {
-                let geom = &self.tile.fc.features[gi].geometry;
+                let geom = &self.tile.geometries[gi];
                 let n = multi_part_count(geom);
                 let parts: Vec<Option<usize>> = if n == 0 {
                     vec![None]
@@ -582,7 +587,7 @@ impl App {
                 }
                 Some(TreeItem::Feature { layer, feat }) => {
                     let key = (*layer, *feat);
-                    if multi_part_count(&self.feature(key.0, key.1).geometry) > 0 {
+                    if multi_part_count(self.geometry(key.0, key.1)) > 0 {
                         if !self.expanded_features.remove(&key) {
                             self.expanded_features.insert(key);
                         }
@@ -611,7 +616,7 @@ impl App {
             }
             Some(TreeItem::Feature { layer, feat }) => {
                 let key = (*layer, *feat);
-                if multi_part_count(&self.feature(key.0, key.1).geometry) > 0
+                if multi_part_count(self.geometry(key.0, key.1)) > 0
                     && !self.expanded_features.contains(&key)
                 {
                     self.expanded_features.insert(key);
@@ -805,14 +810,14 @@ impl App {
         };
 
         let geoms: Vec<&Geometry<i32>> = match sel {
-            TreeItem::All => self.tile.fc.features.iter().map(|f| &f.geometry).collect(),
+            TreeItem::All => self.tile.geometries.iter().collect(),
             TreeItem::Layer(l) => self.layer_groups[*l]
                 .feature_indices
                 .iter()
-                .map(|&gi| &self.tile.fc.features[gi].geometry)
+                .map(|&gi| &self.tile.geometries[gi])
                 .collect(),
             TreeItem::Feature { layer, feat } | TreeItem::SubFeature { layer, feat, .. } => {
-                vec![&self.feature(*layer, *feat).geometry]
+                vec![self.geometry(*layer, *feat)]
             }
         };
         for geom in geoms {
@@ -910,7 +915,7 @@ impl App {
         let inner = tree_height.saturating_sub(2).into_usize();
         self.ensure_layer_expanded(layer);
         if let Some(f) = feat {
-            if multi_part_count(&self.feature(layer, f).geometry) > 0 {
+            if multi_part_count(self.geometry(layer, f)) > 0 {
                 self.expanded_features.insert((layer, f));
                 self.build_tree_items();
             }

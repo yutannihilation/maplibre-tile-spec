@@ -3,6 +3,7 @@
 use insta::{assert_snapshot, with_settings};
 use mlt_core::dump::{DumpTree, RenderOpts, annotate_tile, render};
 use mlt_core::encoder::{EncoderConfig, WireVersion};
+use mlt_core::geo_traits::to_geo::ToGeoGeometry as _;
 use mlt_core::geo_types::{
     Coord, Geometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon,
 };
@@ -132,7 +133,7 @@ fn layer(
         .map(|(name, values)| builder.add_property(*name, values[0].kind()).unwrap())
         .collect();
     for (i, geom) in geoms.into_iter().enumerate() {
-        let mut feature = builder.feature(geom);
+        let mut feature = builder.feature(geom).unwrap();
         if let Some(ids) = &ids {
             feature.id(ids[i]);
         }
@@ -822,8 +823,9 @@ mod geometry_layouts {
         tile.features()
             .iter()
             .map(|f| {
-                let Geometry::MultiPolygon(mp) = f.geometry() else {
-                    panic!("expected a MultiPolygon, got {:?}", f.geometry());
+                let geometry = f.geometry().to_geometry();
+                let Geometry::MultiPolygon(mp) = geometry else {
+                    panic!("expected a MultiPolygon, got {geometry:?}");
                 };
                 mp.iter()
                     .map(|p| p.exterior().coords().map(|c| (c.x, c.y)).collect())
@@ -1919,7 +1921,7 @@ mod delta2 {
             let heights = (0..400)
                 .map(|v| 372_000 + v * 9 + v * v / 50 - i * 300)
                 .collect();
-            let mut feature = builder.feature(line(&pts));
+            let mut feature = builder.feature(line(&pts)).unwrap();
             feature.m_value(elev, MValue::I32(Some(heights))).unwrap();
             feature.finish().unwrap();
         }

@@ -56,7 +56,7 @@ impl Arbitrary<'_> for GeometryValues {
         let mut decoded = Self::default();
         for _ in 0..count {
             let geo: ArbitraryGeometry = u.arbitrary()?;
-            decoded.push_geom(&Geometry::<i32>::from(geo));
+            decoded.push_geometry(&Geometry::<i32>::from(geo)).unwrap();
         }
         Ok(decoded)
     }

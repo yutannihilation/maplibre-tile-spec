@@ -6,31 +6,43 @@
 )]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use mlt_core::geo_traits::{
     CoordTrait, GeometryTrait, GeometryType as GeoKind, LineStringTrait, MultiLineStringTrait,
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
+use mlt_core::geo_types::{
+    Coord, Geometry, LineString, MultiLineString, MultiPolygon, Point, Polygon,
+};
 use mlt_core::test_helpers::{dec, parser};
-use mlt_core::{LendingIterator, ParsedLayer, ParsedLayer01};
+use mlt_core::{FeatureGeometry, LendingIterator, ParsedLayer, ParsedLayer01};
 
 struct Counting;
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    /// Allocations made by this thread: the harness and other tests allocate on their own
+    /// threads, so a per-thread count sees only the code under test.
+    static ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
+fn count() {
+    // `try_with` because the slot is gone while a thread is being torn down.
+    let _ = ALLOCS.try_with(|n| n.set(n.get() + 1));
+}
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Relaxed);
+        count();
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Relaxed);
+        count();
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -39,11 +51,8 @@ unsafe impl GlobalAlloc for Counting {
 static GLOBAL: Counting = Counting;
 
 fn allocs() -> usize {
-    ALLOCS.load(Relaxed)
+    ALLOCS.with(Cell::get)
 }
-
-/// The counter is process-wide, so the tests of this binary must not overlap.
-static SERIAL: Mutex<()> = Mutex::new(());
 
 /// Sums every coordinate through the geo-traits surface alone.
 fn walk(g: &impl GeometryTrait<T = i32>) -> i64 {
@@ -101,7 +110,6 @@ fn parsed_layers(bytes: &[u8]) -> Vec<ParsedLayer01<'_>> {
 
 #[test]
 fn walking_every_view_allocates_nothing() {
-    let _serial = SERIAL.lock().unwrap();
     let bytes = fixture();
     let layers = parsed_layers(&bytes);
     let features: usize = layers.iter().map(ParsedLayer01::feature_count).sum();
@@ -147,7 +155,6 @@ fn walking_every_view_allocates_nothing() {
 
 #[test]
 fn the_row_iterator_allocates_nothing_per_feature() {
-    let _serial = SERIAL.lock().unwrap();
     let bytes = fixture();
     let layers = parsed_layers(&bytes);
     for layer in &layers {
@@ -169,5 +176,78 @@ fn the_row_iterator_allocates_nothing_per_feature() {
             layer.name()
         );
         assert_ne!(sum, i64::MIN);
+    }
+}
+
+/// Allocations of one `FeatureGeometry` construction.
+fn allocs_of(f: impl FnOnce() -> FeatureGeometry) -> usize {
+    let before = allocs();
+    let geometry = f();
+    let used = allocs() - before;
+    drop(geometry);
+    used
+}
+
+#[test]
+fn a_feature_geometry_of_up_to_four_parts_allocates_once_and_a_point_never() {
+    let c = |x, y| Coord { x, y };
+    let square = |x: i32| {
+        LineString(vec![
+            c(x, 0),
+            c(x + 20, 0),
+            c(x + 20, 20),
+            c(x, 20),
+            c(x, 0),
+        ])
+    };
+    let hole = |x: i32| LineString(vec![c(x + 5, 5), c(x + 5, 10), c(x + 10, 10), c(x + 5, 5)]);
+    let line = LineString(vec![c(0, 0), c(1, 1), c(2, 2), c(3, 3)]);
+    let cases: [(&str, Geometry<i32>, usize); 6] = [
+        ("point", Point::new(1, 2).into(), 0),
+        ("line string", line.clone().into(), 1),
+        ("polygon", Polygon::new(square(0), vec![]).into(), 1),
+        (
+            "polygon with three holes",
+            Polygon::new(square(0), vec![hole(0), hole(2), hole(4)]).into(),
+            1,
+        ),
+        (
+            "multi-line-string",
+            MultiLineString(vec![line.clone(), line.clone(), line]).into(),
+            1,
+        ),
+        (
+            "multi-polygon",
+            MultiPolygon(vec![
+                Polygon::new(square(0), vec![hole(0)]),
+                Polygon::new(square(30), vec![]),
+            ])
+            .into(),
+            1,
+        ),
+    ];
+    for (name, g, expected) in cases {
+        let used = allocs_of(|| FeatureGeometry::from_geometry(&g).unwrap());
+        assert_eq!(used, expected, "{name}");
+    }
+
+    let bytes = fixture();
+    let layers = parsed_layers(&bytes);
+    for layer in &layers {
+        let values = layer.geometry_values();
+        for index in 0..values.feature_count() {
+            let view = values.geometry(index).unwrap();
+            let used = allocs_of(|| FeatureGeometry::from_view(view));
+            let parts = FeatureGeometry::from_view(view).part_ends().len();
+            let polygons = FeatureGeometry::from_view(view).polygon_ends().len();
+            // Beyond four inline ends, the ends list spills to the heap as well.
+            let limit = 1 + usize::from(parts > 4) + usize::from(polygons > 4);
+            assert!(
+                used <= limit,
+                "{}[{index}] {:?} of {parts} parts: {used} allocations",
+                layer.name(),
+                view.geometry_type()
+            );
+        }
     }
 }

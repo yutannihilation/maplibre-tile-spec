@@ -20,7 +20,9 @@ fn absent_columns_tile() -> Vec<u8> {
     for i in 0..FEATURES {
         let i = i32::try_from(i).expect("a feature index fits in i32");
         let coords = vec![Coord { x: i, y: i }, Coord { x: i + 1, y: i + 1 }];
-        geometry.push_geom(&Geometry::LineString(LineString::new(coords)));
+        geometry
+            .push_geometry(&Geometry::LineString(LineString::new(coords)))
+            .unwrap();
     }
     let m_values = (0..COLUMNS)
         .map(|i| {

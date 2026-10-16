@@ -920,7 +920,8 @@ fn analyze_mvt_buffer(buffer: &[u8]) -> AnyResult<MltFileInfo> {
         if let Some(name) = feat.properties.get("_layer").and_then(|v| v.as_str()) {
             layer_names.insert(name.to_string());
         }
-        if let Ok(gt) = GeometryType::try_from(&feat.geometry) {
+        {
+            let gt = feat.geometry.geometry_type();
             geometries.insert(gt);
         }
     }

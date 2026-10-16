@@ -11,6 +11,7 @@ use bench_utils::{
     BENCHMARKED_ZOOM_LEVELS, compress_gzip, decompress_gzip, load_mlt_tiles, load_tiles,
     mvt_decode, total_bytes, walk_geometry,
 };
+use mlt_core::mvt::mvt_to_tile_layers;
 use mlt_core::{LendingIterator as _, ParsedLayer};
 
 fn load_proto_tiles(zoom: u8) -> Vec<(String, Vec<u8>)> {
@@ -230,5 +231,74 @@ fn bench_iter_features(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parse, bench_decode_all, bench_iter_features);
+/// Row conversion: decoded layers turned into owned `TileLayer`s, one `FeatureGeometry`
+/// per feature, against the MVT path that builds the same rows straight from protobuf.
+fn bench_into_tile(c: &mut Criterion) {
+    let mut group = c.benchmark_group("into_tile");
+
+    for zoom in BENCHMARKED_ZOOM_LEVELS {
+        let mlt_tiles = load_mlt_tiles(zoom);
+        let proto_tiles = load_proto_tiles(zoom);
+
+        group.throughput(Throughput::Bytes(u64::from_usize(total_bytes(&mlt_tiles))));
+        group.bench_with_input(BenchmarkId::new("mlt", zoom), &mlt_tiles, |b, tiles| {
+            b.iter_batched(
+                || {
+                    let mut d = dec();
+                    tiles
+                        .iter()
+                        .map(|(_, v)| {
+                            d.reset_budget();
+                            let layers = parser().parse_layers(v).expect("mlt parse failed");
+                            d.decode_all(layers).expect("mlt decode_all failed")
+                        })
+                        .collect::<Vec<_>>()
+                },
+                |decoded| {
+                    let mut d = dec();
+                    for layers in decoded {
+                        d.reset_budget();
+                        for layer in layers {
+                            black_box(layer.into_tile(&mut d).expect("mlt into_tile failed"));
+                        }
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+
+        for &(codec_name, compress, decompress) in CODECS {
+            let compressed = compress_tiles(&proto_tiles, compress);
+            group.throughput(Throughput::Bytes(u64::from_usize(total_bytes(&compressed))));
+            group.bench_with_input(
+                BenchmarkId::new(format!("mvt+{codec_name}"), zoom),
+                &compressed,
+                |b, tiles| {
+                    b.iter_batched(
+                        || tiles.iter().map(|(_, d)| d.clone()).collect::<Vec<_>>(),
+                        |compressed_data| {
+                            for data in compressed_data {
+                                black_box(
+                                    mvt_to_tile_layers(decompress(black_box(&data)))
+                                        .expect("mvt_to_tile_layers failed"),
+                                );
+                            }
+                        },
+                        BatchSize::LargeInput,
+                    );
+                },
+            );
+        }
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_parse,
+    bench_decode_all,
+    bench_iter_features,
+    bench_into_tile
+);
 criterion_main!(benches);

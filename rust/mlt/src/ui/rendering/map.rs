@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use mlt_core::geo_types::{Coord, Geometry, Polygon};
-use mlt_core::geojson::FeatureCollection;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::prelude::{Span, Style};
@@ -34,7 +33,7 @@ pub fn render_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
     let ext = app.extent();
     let (x0, y0, x1, y1) = app.calculate_bounds();
     let hov = app.hovered.as_ref().map(|h| &h.item);
-    let fc = &app.tile.fc;
+    let geometries = &app.tile.geometries;
 
     let canvas = Canvas::default()
         .block(block_with_title("Map View"))
@@ -59,10 +58,15 @@ pub fn render_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
                         if Some(li) == hov_layer {
                             continue;
                         }
-                        draw_group(ctx, fc, group, Paint::Natural);
+                        draw_group(ctx, geometries, group, Paint::Natural);
                     }
                     if let Some(l) = hov_layer {
-                        draw_group(ctx, fc, &app.layer_groups[l], Paint::Highlight(CLR_HOVERED));
+                        draw_group(
+                            ctx,
+                            geometries,
+                            &app.layer_groups[l],
+                            Paint::Highlight(CLR_HOVERED),
+                        );
                     }
                 }
                 TreeItem::Layer(l) => {
@@ -74,17 +78,11 @@ pub fn render_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
                     let group = &app.layer_groups[*l];
                     for (fi, &gi) in group.feature_indices.iter().enumerate() {
                         if Some(fi) != hov_feat {
-                            draw_feature(
-                                ctx,
-                                &fc.features[gi].geometry,
-                                Paint::Natural,
-                                None,
-                                None,
-                            );
+                            draw_feature(ctx, &geometries[gi], Paint::Natural, None, None);
                         }
                     }
                     if let Some(fi) = hov_feat {
-                        let geom = &app.feature(*l, fi).geometry;
+                        let geom = app.geometry(*l, fi);
                         draw_tessellation(ctx, app.tessellation(*l, fi), geom, None);
                         draw_feature(ctx, geom, Paint::Highlight(CLR_HOVERED), None, None);
                     }
@@ -95,7 +93,7 @@ pub fn render_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
                     for (fi, &gi) in group.feature_indices.iter().enumerate() {
                         if fi != *feat {
                             let paint = Paint::Flat(CLR_CONTEXT_FEATURE);
-                            draw_feature(ctx, &fc.features[gi].geometry, paint, None, None);
+                            draw_feature(ctx, &geometries[gi], paint, None, None);
                         }
                     }
                     let sel_part = match sel {
@@ -114,7 +112,7 @@ pub fn render_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
                         hov,
                         Some(TreeItem::Feature { layer: hl, feat: hf }) if hl == layer && hf == feat
                     );
-                    let geom = &app.feature(*layer, *feat).geometry;
+                    let geom = app.geometry(*layer, *feat);
                     draw_tessellation(ctx, app.tessellation(*layer, *feat), geom, sel_part);
                     let paint = if whole_hovered {
                         Paint::Highlight(CLR_HOVERED)
@@ -129,9 +127,14 @@ pub fn render_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
     f.render_widget(canvas, area);
 }
 
-fn draw_group(ctx: &mut Context<'_>, fc: &FeatureCollection, group: &LayerGroup, paint: Paint) {
+fn draw_group(
+    ctx: &mut Context<'_>,
+    geometries: &[Geometry<i32>],
+    group: &LayerGroup,
+    paint: Paint,
+) {
     for &gi in &group.feature_indices {
-        draw_feature(ctx, &fc.features[gi].geometry, paint, None, None);
+        draw_feature(ctx, &geometries[gi], paint, None, None);
     }
 }
 
@@ -139,7 +142,12 @@ fn draw_group(ctx: &mut Context<'_>, fc: &FeatureCollection, group: &LayerGroup,
 fn draw_other_layers(ctx: &mut Context<'_>, app: &App, except: usize) {
     for (li, group) in app.layer_groups.iter().enumerate() {
         if li != except {
-            draw_group(ctx, &app.tile.fc, group, Paint::Flat(CLR_CONTEXT_LAYER));
+            draw_group(
+                ctx,
+                &app.tile.geometries,
+                group,
+                Paint::Flat(CLR_CONTEXT_LAYER),
+            );
         }
     }
 }
@@ -213,7 +221,12 @@ fn ring_edges(geom: &Geometry<i32>) -> HashSet<(Coord<i32>, Coord<i32>)> {
 }
 
 /// Full-tile preview for file browser (all layers, no r-tree/mouse).
-pub fn render_tile_preview(f: &mut Frame<'_>, area: Rect, fc: &FeatureCollection, extent: u32) {
+pub fn render_tile_preview(
+    f: &mut Frame<'_>,
+    area: Rect,
+    geometries: &[Geometry<i32>],
+    extent: u32,
+) {
     let canvas = Canvas::default()
         .block(block_with_title("Tile Preview"))
         .x_bounds([0.0, f64::from(extent)])
@@ -226,8 +239,8 @@ pub fn render_tile_preview(f: &mut Frame<'_>, area: Rect, fc: &FeatureCollection
                 height: f64::from(extent),
                 color: CLR_EXTENT,
             });
-            for feat in &fc.features {
-                draw_feature(ctx, &feat.geometry, Paint::Natural, None, None);
+            for geometry in geometries {
+                draw_feature(ctx, geometry, Paint::Natural, None, None);
             }
         });
 
@@ -340,7 +353,7 @@ fn draw_mbtiles_loaded_tile_layers(
     ctx: &mut Context<'_>,
     hovered: Option<&MbtHoveredInfo>,
     data_tile: (u8, u32, u32),
-    fc: &FeatureCollection,
+    geometries: &[Geometry<i32>],
     extent: u32,
     layer_groups: &[LayerGroup],
     vy0: f64,
@@ -359,11 +372,11 @@ fn draw_mbtiles_loaded_tile_layers(
     });
     for group in layer_groups {
         for &gi in &group.feature_indices {
-            let feat = &fc.features[gi];
-            let base = geometry_color(&feat.geometry);
+            let geometry = &geometries[gi];
+            let base = geometry_color(geometry);
             let is_hov = hov_gi == Some(gi);
             let color = if is_hov { CLR_HOVERED } else { base };
-            draw_geom_world(ctx, &feat.geometry, &transform, vy0, vy1, color);
+            draw_geom_world(ctx, geometry, &transform, vy0, vy1, color);
         }
     }
 }
@@ -410,7 +423,7 @@ pub fn render_mbtiles_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
                     continue;
                 }
                 let Some(MbtTileData::Loaded {
-                    fc,
+                    geometries,
                     extent,
                     layer_groups,
                     ..
@@ -422,7 +435,7 @@ pub fn render_mbtiles_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
                     ctx,
                     mbt.hovered.as_ref(),
                     (sz, sx, sy),
-                    fc,
+                    geometries,
                     *extent,
                     layer_groups,
                     vy0,
@@ -452,7 +465,7 @@ pub fn render_mbtiles_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
                         ctx.print(cx, sy, Span::styled("…", Style::default().fg(CLR_DIMMED)));
                     }
                     MbtTileData::Loaded {
-                        fc,
+                        geometries,
                         extent,
                         layer_groups,
                         ..
@@ -461,7 +474,7 @@ pub fn render_mbtiles_map_panel(f: &mut Frame<'_>, area: Rect, app: &App) {
                             ctx,
                             mbt.hovered.as_ref(),
                             (tz, tx, ty),
-                            fc,
+                            geometries,
                             *extent,
                             layer_groups,
                             vy0,

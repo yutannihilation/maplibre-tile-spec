@@ -386,7 +386,9 @@ mod tests {
         let mut geometry = GeometryValues::default();
         for &count in vertices {
             let coords = (0..count).map(|i| Coord { x: i, y: i }).collect();
-            geometry.push_geom(&Geometry::LineString(LineString::new(coords)));
+            geometry
+                .push_geometry(&Geometry::LineString(LineString::new(coords)))
+                .unwrap();
         }
         geometry
     }

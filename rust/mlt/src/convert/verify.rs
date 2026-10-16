@@ -6,8 +6,10 @@ use std::fmt;
 
 use anyhow::{Context as _, Result as AnyResult, anyhow, bail, ensure};
 use mlt_core::encoder::wound_layer;
-use mlt_core::geo_types::{Coord, Geometry, LineString, Polygon};
-use mlt_core::{Decoder, MValue, NestedValue, Parser, PropValue, TileFeature, TileLayer};
+use mlt_core::{
+    Decoder, FeatureGeometry, GeometryType, MValue, NestedValue, Parser, PropValue, TileFeature,
+    TileLayer,
+};
 
 /// Decode `encoded`, hand it to `restore`, and require the result to hold what `source` does.
 ///
@@ -71,12 +73,6 @@ fn same_layer(expected: &TileLayer, actual: &TileLayer) -> AnyResult<()> {
             e.geometry == a.geometry,
             "feature {id} has another geometry"
         );
-        ensure!(
-            e.z == a.z,
-            "feature {id} has other z: {:?}, not {:?}",
-            a.z,
-            e.z
-        );
         if let Some(difference) = first_difference(&e.values, &a.values) {
             bail!("feature {id} has other values: {difference}");
         }
@@ -87,9 +83,8 @@ fn same_layer(expected: &TileLayer, actual: &TileLayer) -> AnyResult<()> {
 /// One feature, its non-null values keyed by the kind of column and its name.
 struct Row<'a> {
     id: Option<u64>,
-    geometry: &'a Geometry<i32>,
-    /// Empty in a flat layer.
-    z: &'a [i32],
+    /// With z on a z layer.
+    geometry: &'a FeatureGeometry,
     values: BTreeMap<(Role, &'a str), Value<'a>>,
 }
 
@@ -207,50 +202,23 @@ fn rows(layer: &TileLayer) -> Vec<Row<'_>> {
         .map(|f| (Shape::of(f.geometry()), row(layer, f)))
         .collect();
     rows.sort_by(|(a_shape, a), (b_shape, b)| {
-        (a.id, a_shape, a.z, &a.values).cmp(&(b.id, b_shape, b.z, &b.values))
+        (a.id, a_shape, &a.values).cmp(&(b.id, b_shape, &b.values))
     });
     rows.into_iter().map(|(_, row)| row).collect()
 }
 
-/// A geometry's coordinates, which unlike [`Geometry`] are ordered.
+/// A geometry's kind, words and part structure, which unlike the trait view are ordered.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-enum Shape {
-    Point(Xy),
-    Line(Xy, Xy),
-    LineString(Vec<Xy>),
-    Polygon(Vec<Vec<Xy>>),
-    MultiPoint(Vec<Xy>),
-    MultiLineString(Vec<Vec<Xy>>),
-    MultiPolygon(Vec<Vec<Vec<Xy>>>),
-    Rect(Xy, Xy),
-    Triangle(Xy, Xy, Xy),
-    Collection(Vec<Self>),
-}
-
-type Xy = (i32, i32);
+struct Shape(GeometryType, Vec<i32>, Vec<u32>, Vec<u32>);
 
 impl Shape {
-    fn of(geometry: &Geometry<i32>) -> Self {
-        let xy = |c: Coord<i32>| (c.x, c.y);
-        let line = |l: &LineString<i32>| l.coords().copied().map(xy).collect::<Vec<_>>();
-        let polygon = |p: &Polygon<i32>| {
-            std::iter::once(p.exterior())
-                .chain(p.interiors())
-                .map(line)
-                .collect::<Vec<_>>()
-        };
-        match geometry {
-            Geometry::Point(p) => Self::Point(xy(p.0)),
-            Geometry::Line(l) => Self::Line(xy(l.start), xy(l.end)),
-            Geometry::LineString(l) => Self::LineString(line(l)),
-            Geometry::Polygon(p) => Self::Polygon(polygon(p)),
-            Geometry::MultiPoint(mp) => Self::MultiPoint(mp.iter().map(|p| xy(p.0)).collect()),
-            Geometry::MultiLineString(ml) => Self::MultiLineString(ml.iter().map(line).collect()),
-            Geometry::MultiPolygon(mp) => Self::MultiPolygon(mp.iter().map(polygon).collect()),
-            Geometry::Rect(r) => Self::Rect(xy(r.min()), xy(r.max())),
-            Geometry::Triangle(t) => Self::Triangle(xy(t.v1()), xy(t.v2()), xy(t.v3())),
-            Geometry::GeometryCollection(gc) => Self::Collection(gc.iter().map(Self::of).collect()),
-        }
+    fn of(geometry: &FeatureGeometry) -> Self {
+        Self(
+            geometry.geometry_type(),
+            geometry.words().to_vec(),
+            geometry.part_ends().to_vec(),
+            geometry.polygon_ends().to_vec(),
+        )
     }
 }
 
@@ -274,7 +242,6 @@ fn row<'a>(layer: &'a TileLayer, feature: &'a TileFeature) -> Row<'a> {
     Row {
         id: feature.id(),
         geometry: feature.geometry(),
-        z: feature.z(),
         values,
     }
 }
@@ -298,14 +265,14 @@ mod tests {
     use std::fmt::Write as _;
 
     use mlt_core::PropKind;
-    use mlt_core::geo_types::Point;
+    use mlt_core::geo_types::{Geometry, LineString, Point, Polygon};
 
     use super::*;
 
     fn layer_of(kind: PropKind, value: PropValue, id: u64) -> TileLayer {
         let mut layer = TileLayer::builder("l", 4096).unwrap();
         let key = layer.add_property("v", kind).unwrap();
-        let mut row = layer.feature(Point::new(1, 2).into());
+        let mut row = layer.feature(Geometry::Point(Point::new(1, 2))).unwrap();
         row.id(Some(id));
         row.property(key, value).unwrap();
         row.finish().unwrap();
@@ -326,11 +293,13 @@ mod tests {
                 .set_z_step(mlt_core::ZStep::new(step).unwrap())
                 .unwrap();
         }
-        let mut row = layer.feature(Point::new(1, 2).into());
-        row.id(Some(1));
+        let mut geometry =
+            FeatureGeometry::from_geometry(&Geometry::Point(Point::new(1, 2))).unwrap();
         if !z.is_empty() {
-            row.z(z).unwrap();
+            geometry = geometry.with_z(z).unwrap();
         }
+        let mut row = layer.feature(geometry).unwrap();
+        row.id(Some(1));
         row.finish().unwrap();
         layer.finish()
     }
@@ -346,7 +315,7 @@ mod tests {
     fn a_changed_z_names_the_feature() {
         let a = layer_with_z(Some(0), vec![100]);
         let b = layer_with_z(Some(0), vec![101]);
-        insta::assert_snapshot!(same_layer(&a, &b).unwrap_err(), @"feature 1 has other z: [101], not [100]");
+        insta::assert_snapshot!(same_layer(&a, &b).unwrap_err(), @"feature 1 has another geometry");
     }
 
     #[test]
@@ -358,8 +327,14 @@ mod tests {
             LineString::from(vec![(0, 0), (0, 9), (9, 9), (9, 0), (0, 0)]),
             vec![],
         );
-        let mut row = layer.feature(clockwise.into());
-        row.z(vec![10, 20, 30, 40]).unwrap();
+        let mut row = layer
+            .feature(
+                FeatureGeometry::from_geometry(&Geometry::Polygon(clockwise))
+                    .unwrap()
+                    .with_z([10, 20, 30, 40])
+                    .unwrap(),
+            )
+            .unwrap();
         row.m_value(key, MValue::I32(Some(vec![1, 2, 3, 4])))
             .unwrap();
         row.finish().unwrap();
@@ -373,7 +348,7 @@ mod tests {
     fn layer_with_nested(kind: mlt_core::NestedKind, value: NestedValue) -> TileLayer {
         let mut layer = TileLayer::builder("l", 4096).unwrap();
         let key = layer.add_nested("n", kind).unwrap();
-        let mut row = layer.feature(Point::new(1, 2).into());
+        let mut row = layer.feature(Geometry::Point(Point::new(1, 2))).unwrap();
         row.id(Some(1));
         row.nested(key, value).unwrap();
         row.finish().unwrap();
@@ -458,7 +433,7 @@ mod tests {
     fn layer_of_points(points: &[(Option<u64>, i32)]) -> TileLayer {
         let mut layer = TileLayer::builder("l", 4096).unwrap();
         for &(id, x) in points {
-            let mut row = layer.feature(Point::new(x, 0).into());
+            let mut row = layer.feature(Geometry::Point(Point::new(x, 0))).unwrap();
             row.id(id);
             row.finish().unwrap();
         }
@@ -565,7 +540,7 @@ mod tests {
     fn layer_with_m_value(kind: PropKind, value: MValue) -> TileLayer {
         let mut layer = TileLayer::builder("l", 4096).unwrap();
         let key = layer.add_m_value("m", kind).unwrap();
-        let mut row = layer.feature(Point::new(1, 2).into());
+        let mut row = layer.feature(Geometry::Point(Point::new(1, 2))).unwrap();
         row.id(Some(1));
         row.m_value(key, value).unwrap();
         row.finish().unwrap();

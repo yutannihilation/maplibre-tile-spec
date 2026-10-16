@@ -1,42 +1,54 @@
 //! Decode MVT bytes into [`FeatureCollection`] or row-oriented [`TileLayer`]s.
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 
 use fast_mvt::{MvtError, MvtLayer, MvtLayerRef, MvtReaderRef, MvtValue, MvtValueRef};
 use serde_json::Value;
 use usize_cast::IntoUsize as _;
 
+use super::geometry::decode_geometry;
+use crate::FeatureGeometry;
 use crate::convert::infer::{ColumnInference, InferredKind};
 use crate::geojson::{Feature, FeatureCollection};
 use crate::tile::{PropKind, PropValue, TileFeature, TileLayer};
 use crate::{MltError, MltResult};
 
-/// Parse MVT bytes into a list of layers, each holding its raw features.
-fn read_mvt_layers(data: &[u8]) -> MltResult<Vec<MvtLayer>> {
-    let layers = MvtReaderRef::new(data)?.to_tile()?.layers;
-    if layers.iter().any(|layer| layer.name.is_empty()) {
-        return Err(MltError::MissingLayerName);
-    }
-    Ok(layers)
-}
-
 /// Parse MVT binary data and convert to a [`FeatureCollection`].
 pub fn mvt_to_feature_collection(data: impl AsRef<[u8]>) -> MltResult<FeatureCollection> {
-    let mut features = Vec::new();
+    let reader = MvtReaderRef::new(data.as_ref())?;
+    // Read every layer before checking names, in the order fast-mvt's owned conversion
+    // reports errors: a layer's extent, then each feature's properties, then its geometry.
+    let mut layers = Vec::with_capacity(reader.layer_count());
+    for layer in reader.layers() {
+        let extent = NonZeroU32::new(layer.extent()).ok_or(MvtError::InvalidExtent)?;
+        let mut features = Vec::with_capacity(layer.feature_count());
+        for feat in layer.features() {
+            let properties = feat
+                .properties()
+                .map(|property| property.map(|(key, value)| (key, value.into_owned())))
+                .collect::<Result<Vec<_>, _>>()?;
+            let geometry = decode_geometry(feat.geom_type(), feat.geometry_commands())?;
+            features.push((feat.id(), geometry, properties));
+        }
+        layers.push((layer.name(), extent, features));
+    }
+    if layers.iter().any(|(name, ..)| name.is_empty()) {
+        return Err(MltError::MissingLayerName);
+    }
 
-    for layer in read_mvt_layers(data.as_ref())? {
-        for feat in layer.features {
-            let mut properties = feat
-                .properties
+    let mut features = Vec::new();
+    for (name, extent, layer_features) in layers {
+        for (id, geometry, props) in layer_features {
+            let mut properties = props
                 .into_iter()
-                .map(|(k, v)| Ok((k, Value::try_from(v)?)))
+                .map(|(k, v)| Ok((k.to_string(), Value::try_from(v)?)))
                 .collect::<MltResult<BTreeMap<_, _>>>()?;
-            properties.insert("_layer".into(), Value::String(layer.name.clone()));
-            properties.insert("_extent".into(), Value::Number(layer.extent.get().into()));
+            properties.insert("_layer".into(), Value::String(name.to_string()));
+            properties.insert("_extent".into(), Value::Number(extent.get().into()));
             features.push(Feature {
-                geometry: feat.geometry,
-                z: None,
-                id: feat.id,
+                geometry,
+                id,
                 properties,
                 ty: "Feature".into(),
             });
@@ -115,14 +127,12 @@ fn tile_layer_from_ref(layer: MvtLayerRef<'_>) -> MltResult<TileLayer> {
         }
         tile_features.push(TileFeature {
             id: feat.id(),
-            geometry: feat.geometry()?,
+            geometry: decode_geometry(feat.geom_type(), feat.geometry_commands())?,
             properties,
             #[cfg(feature = "unstable-v2")]
             m_values: Vec::new(),
             #[cfg(feature = "unstable-v2")]
             nested: Vec::new(),
-            #[cfg(feature = "unstable-v2")]
-            z: Vec::new(),
         });
     }
 
@@ -162,14 +172,12 @@ impl TryFrom<MvtLayer> for TileLayer {
             }
             tile_features.push(TileFeature {
                 id: feat.id,
-                geometry: feat.geometry,
+                geometry: FeatureGeometry::from_geometry(&feat.geometry)?,
                 properties,
                 #[cfg(feature = "unstable-v2")]
                 m_values: Vec::new(),
                 #[cfg(feature = "unstable-v2")]
                 nested: Vec::new(),
-                #[cfg(feature = "unstable-v2")]
-                z: Vec::new(),
             });
         }
 
@@ -528,6 +536,73 @@ mod tests {
                 .to_string(),
             "invalid extent: 0"
         );
+    }
+
+    /// The collection fast-mvt's owned decoder gives, converted the way this module did before
+    /// it read geometry commands itself.
+    fn feature_collection_via_geo_types(data: &[u8]) -> FeatureCollection {
+        let mut features = Vec::new();
+        for layer in MvtReaderRef::new(data).unwrap().to_tile().unwrap().layers {
+            for feat in layer.features {
+                let mut properties = feat
+                    .properties
+                    .into_iter()
+                    .map(|(k, v)| (k, Value::try_from(v).unwrap()))
+                    .collect::<BTreeMap<_, _>>();
+                properties.insert("_layer".into(), Value::String(layer.name.clone()));
+                properties.insert("_extent".into(), Value::Number(layer.extent.get().into()));
+                features.push(Feature {
+                    geometry: FeatureGeometry::from_geometry(&feat.geometry).unwrap(),
+                    id: feat.id,
+                    properties,
+                    ty: "Feature".into(),
+                });
+            }
+        }
+        FeatureCollection {
+            features,
+            ty: "FeatureCollection".into(),
+        }
+    }
+
+    /// Geometry decoding is compared on every fixture in `convert::mvt::geometry`; this checks
+    /// the conversions around it on the fixtures small enough to run quickly unoptimised.
+    #[test]
+    fn every_small_fixture_converts_as_through_geo_types() {
+        fn mvt_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    mvt_files(&path, out);
+                } else if path.extension().is_some_and(|e| e == "mvt")
+                    && path.metadata().unwrap().len() < 512 * 1024
+                {
+                    out.push(path);
+                }
+            }
+        }
+        let mut paths = Vec::new();
+        mvt_files(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures"),
+            &mut paths,
+        );
+        assert_ne!(paths.len(), 0, "no MVT fixtures found");
+        for path in paths {
+            let data = std::fs::read(&path).unwrap();
+            let expected = feature_collection_via_geo_types(&data);
+            let actual = mvt_to_feature_collection(&data).unwrap();
+            assert_eq!(actual, expected, "{}", path.display());
+            let layers = mvt_to_tile_layers(&data).unwrap();
+            let owned: Vec<TileLayer> = MvtReaderRef::new(&data)
+                .unwrap()
+                .to_tile()
+                .unwrap()
+                .layers
+                .into_iter()
+                .map(|l| TileLayer::try_from(l).unwrap())
+                .collect();
+            assert_eq!(layers, owned, "{}", path.display());
+        }
     }
 
     #[test]

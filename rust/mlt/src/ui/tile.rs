@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use mlt_core::geo_traits::to_geo::ToGeoGeometry as _;
 use mlt_core::geo_traits::{
     CoordTrait, GeometryTrait, GeometryType as GeoKind, LineStringTrait, MultiPolygonTrait,
     PolygonTrait,
@@ -31,6 +32,8 @@ pub(crate) type Tessellation = Vec<Vec<Triangle>>;
 /// `triangles` is indexed like `fc.features`.
 pub(crate) struct ParsedTile {
     pub fc: FeatureCollection,
+    /// Each feature's geometry as geo-types, converted once at load for the renderer and its helpers.
+    pub geometries: Vec<Geometry<i32>>,
     pub extent: u32,
     pub triangles: Vec<Option<Tessellation>>,
 }
@@ -40,6 +43,7 @@ impl ParsedTile {
         let extent = extent_from_fc(&fc);
         let triangles = vec![None; fc.features.len()];
         Self {
+            geometries: geometries_of(&fc),
             fc,
             extent,
             triangles,
@@ -55,6 +59,7 @@ impl ParsedTile {
             triangles.resize(fc.features.len(), None);
             Ok(Self {
                 extent: extent_from_fc(&fc),
+                geometries: geometries_of(&fc),
                 fc,
                 triangles,
             })
@@ -75,6 +80,14 @@ impl ParsedTile {
     }
 }
 
+/// Every feature's geometry as geo-types, in feature order.
+pub(super) fn geometries_of(fc: &FeatureCollection) -> Vec<Geometry<i32>> {
+    fc.features
+        .iter()
+        .map(|f| f.geometry.to_geometry())
+        .collect()
+}
+
 /// Rough number of bytes a decoded feature collection occupies.
 /// The per-property and per-feature constants stand in for map node, string, and struct overhead.
 pub(crate) fn fc_memory_estimate(fc: &FeatureCollection) -> usize {
@@ -82,7 +95,8 @@ pub(crate) fn fc_memory_estimate(fc: &FeatureCollection) -> usize {
     fc.features
         .iter()
         .map(|f| {
-            let verts = geometry_coord_count(&f.geometry) * coord;
+            // Twice: the feature collection's words and the renderer's geo-types copy.
+            let verts = f.geometry.vertex_count() * coord * 2;
             let props: usize = f
                 .properties
                 .iter()

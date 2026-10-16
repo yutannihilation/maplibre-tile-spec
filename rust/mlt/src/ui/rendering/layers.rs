@@ -34,11 +34,11 @@ pub fn render_tree_panel(f: &mut Frame<'_>, area: Rect, app: &mut App) {
                     let first = g
                         .feature_indices
                         .first()
-                        .map(|&gi| geometry_type_name(&app.tile.fc.features[gi].geometry));
+                        .map(|&gi| geometry_type_name(&app.tile.geometries[gi]));
                     let all_same = first.is_some_and(|ft| {
                         g.feature_indices
                             .iter()
-                            .all(|&gi| geometry_type_name(&app.tile.fc.features[gi].geometry) == ft)
+                            .all(|&gi| geometry_type_name(&app.tile.geometries[gi]) == ft)
                     });
                     let label = if all_same && n > 0 {
                         format!("{}s", first.unwrap())
@@ -52,7 +52,7 @@ pub fn render_tree_panel(f: &mut Frame<'_>, area: Rect, app: &mut App) {
                     )
                 }
                 TreeItem::Feature { layer, feat } => {
-                    let geom = &app.feature(*layer, *feat).geometry;
+                    let geom = app.geometry(*layer, *feat);
                     (
                         format!(
                             "    Feat {feat}: {}{}",
@@ -63,7 +63,7 @@ pub fn render_tree_panel(f: &mut Frame<'_>, area: Rect, app: &mut App) {
                     )
                 }
                 TreeItem::SubFeature { layer, feat, part } => {
-                    let geom = &app.feature(*layer, *feat).geometry;
+                    let geom = app.geometry(*layer, *feat);
                     let n = match geom {
                         Geometry::<i32>::MultiPoint(_) => "Point",
                         Geometry::<i32>::MultiLineString(_) => "LineString",
@@ -229,7 +229,7 @@ fn geometry_count_lines(app: &App, layer: Option<usize>) -> Vec<Line<'static>> {
         .filter(|(i, _)| layer.is_none_or(|l| l == *i));
     for (_, group) in groups {
         for &gi in &group.feature_indices {
-            let geom = &app.tile.fc.features[gi].geometry;
+            let geom = &app.tile.geometries[gi];
             if let Ok(t) = GeometryType::try_from(geom) {
                 *counts.entry(t).or_default() += 1;
             }
@@ -480,12 +480,12 @@ fn render_geometry_stats(f: &mut Frame<'_>, area: Rect, app: &mut App) {
             geometry_count_lines(app, Some(l)),
         ),
         TreeItem::Feature { layer, feat } => {
-            let mut lines = geometry_stats_lines(&app.feature(layer, feat).geometry);
+            let mut lines = geometry_stats_lines(app.geometry(layer, feat));
             lines.extend(tessellation_line(app, layer, feat, None));
             ("Geometry".to_string(), lines)
         }
         TreeItem::SubFeature { layer, feat, part } => {
-            let mut lines = subpart_stats_lines(&app.feature(layer, feat).geometry, part);
+            let mut lines = subpart_stats_lines(app.geometry(layer, feat), part);
             lines.extend(tessellation_line(app, layer, feat, Some(part)));
             ("Geometry".to_string(), lines)
         }

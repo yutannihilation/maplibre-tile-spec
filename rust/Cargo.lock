@@ -2889,6 +2889,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "smallvec",
  "strum",
  "test_each_file",
  "thiserror 2.0.21",

@@ -169,10 +169,8 @@ pub enum MltError {
         "layer {0} already holds features without z coordinates, so it cannot be given a z step"
     )]
     ZStepOnNonEmptyLayer(String),
-    #[cfg(feature = "unstable-v2")]
     #[error("a feature carries {actual} z coordinates, but the layer expects {expected}")]
     ZVertexCountMismatch { expected: usize, actual: usize },
-    #[cfg(feature = "unstable-v2")]
     #[error("the vertices already carry z coordinates")]
     ZAlreadySet,
     #[cfg(feature = "unstable-v2")]
@@ -412,6 +410,22 @@ pub enum MltError {
         field: &'static str,
         idx: usize,
     },
+    #[error("geometry: dimension {0:?} is not supported, only Xy and Xyz are")]
+    GeometryDimensionUnsupported(geo_traits::Dimensions),
+    #[error("geometry: expected {expected:?} like the layer, got {actual:?}")]
+    GeometryDimensionMismatch {
+        expected: geo_traits::Dimensions,
+        actual: geo_traits::Dimensions,
+    },
+    #[error("geometry: vertex {vertex} does not have its geometry's dimension {expected:?}")]
+    VertexDimensionMismatch {
+        expected: geo_traits::Dimensions,
+        vertex: usize,
+    },
+    #[error("geometry: a geometry collection cannot be one feature")]
+    GeometryCollectionUnsupported,
+    #[error("geometry: an empty point cannot be stored")]
+    EmptyPoint,
     #[error("geometry[{index}]: vertex {vertex} out of bounds (count={count})")]
     GeometryVertexOutOfBounds {
         index: usize,
