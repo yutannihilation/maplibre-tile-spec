@@ -1,5 +1,6 @@
 import { convertGeometryVector } from "./geometryVectorConverter";
 import { decodeZOrderCurve } from "./zOrderCurve";
+import { attachZ } from "./zCoordinates";
 import type Point from "@mapbox/point-geometry";
 import type { GEOMETRY_TYPE } from "./geometryType";
 import type { VertexBufferType } from "./vertexBufferType";
@@ -24,6 +25,7 @@ export abstract class GeometryVector {
         private readonly _vertexOffsets: Uint32Array | undefined,
         private readonly _vertexBuffer: Int32Array | Uint32Array,
         private readonly _mortonSettings?: MortonSettings,
+        private readonly _zBuffer?: Int32Array,
     ) {}
 
     get vertexBufferType(): VertexBufferType {
@@ -72,8 +74,17 @@ export abstract class GeometryVector {
         return [x, y];
     }
 
+    /** One z per vertex buffer entry, when the vertices have z coordinates. */
+    get zBuffer(): Int32Array | undefined {
+        return this._zBuffer;
+    }
+
     getGeometries(): CoordinatesArray[] {
-        return convertGeometryVector(this);
+        const geometries = convertGeometryVector(this);
+        if (this._zBuffer !== undefined) {
+            attachZ(geometries, this._zBuffer, this.vertexOffsets);
+        }
+        return geometries;
     }
 
     get mortonSettings(): MortonSettings | undefined {

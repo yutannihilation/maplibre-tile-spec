@@ -1,10 +1,12 @@
 import { GEOMETRY_TYPE } from "./geometry/geometryType";
 import { classifyRings } from "./geometry/classifyRings";
 import type { Geometry } from "./geometry/geometryVector";
+import type { Vertex } from "./geometry/zCoordinates";
 import type FeatureTable from "./featureTable";
 
 /**
  * Converts decoded feature tables into the GeoJSON shape the synthetic fixtures are written in.
+ * Vertices with z come out as `[x, y, z]`, and the layer's z grid as `_z_step`.
  *
  * Shared by the decoder's synthetic tests and the encoder's round trip, so both compare against the
  * fixtures in exactly the same way. The layer name and extent are carried in the properties, since
@@ -20,6 +22,7 @@ export function featureTablesToFeatureCollection(featureTables: FeatureTable[]):
                 properties: {
                     _layer: table.name,
                     _extent: table.extent,
+                    ...(table.zStep === undefined ? {} : { _z_step: table.zStep }),
                     ...Object.fromEntries(Object.entries(feature.properties).map(([k, v]) => [k, safeNumber(v)])),
                 },
             };
@@ -39,7 +42,9 @@ export function featureTablesToFeatureCollection(featureTables: FeatureTable[]):
  * into polygons, which {@link classifyRings} does from the winding order.
  */
 export function getGeometry(geometry: Geometry): GeoJSON.Geometry {
-    const coords = geometry.coordinates.map((ring) => ring.map((p) => [p.x, p.y]));
+    const coords = geometry.coordinates.map((ring) =>
+        ring.map((p: Vertex) => (p.z === undefined ? [p.x, p.y] : [p.x, p.y, p.z])),
+    );
     switch (geometry.type) {
         case GEOMETRY_TYPE.POINT:
             return { type: "Point", coordinates: coords[0][0] };

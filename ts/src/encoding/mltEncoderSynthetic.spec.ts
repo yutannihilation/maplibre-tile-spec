@@ -14,7 +14,11 @@ import { encodeTile, type Feature, type FeatureGeometry, type Layer, type Proper
  * The encoder writes v1, so a v2 fixture round-trips as soon as the decoder reads it: the list is
  * the decoder's, plus any v2-only content v1 cannot carry.
  */
-const UNSUPPORTED: string[] = [...UNIMPLEMENTED_SYNTHETICS_02];
+const UNSUPPORTED: string[] = [
+    ...UNIMPLEMENTED_SYNTHETICS_02,
+    // v1 vertices are (x, y) pairs, so z coordinates do not survive
+    "0x02/z_*",
+];
 
 /**
  * Decodes each synthetic `.mlt`, re-encodes what came out, and checks the result still decodes to

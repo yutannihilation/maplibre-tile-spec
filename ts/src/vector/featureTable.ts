@@ -22,6 +22,7 @@ export default class FeatureTable {
         private readonly _idVector?: IdVector,
         private readonly _propertyVectors?: Vector[],
         private readonly _extent = 4096,
+        private readonly _zStep?: number,
     ) {
         if (_name.length === 0) {
             throw new Error("Missing layer name");
@@ -58,6 +59,14 @@ export default class FeatureTable {
 
     get extent(): number {
         return this._extent;
+    }
+
+    /**
+     * The exponent of the z grid, from -3 (millimetres) to 4 (10 km), when the vertices have z
+     * coordinates: a vertex's elevation is `-10000 + z * 10^zStep` metres.
+     */
+    get zStep(): number | undefined {
+        return this._zStep;
     }
 
     /**

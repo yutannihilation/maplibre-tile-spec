@@ -2,6 +2,7 @@ import Point from "@mapbox/point-geometry";
 import { createFlatGeometryVector } from "./flatGeometryVector";
 import type { CoordinatesArray } from "./geometryVector";
 import type { TopologyVector } from "./topologyVector";
+import type { Vertex } from "./zCoordinates";
 
 export abstract class GpuVector implements Iterable<CoordinatesArray> {
     protected constructor(
@@ -9,6 +10,7 @@ export abstract class GpuVector implements Iterable<CoordinatesArray> {
         private readonly _indexBuffer: Uint32Array,
         private readonly _vertexBuffer: Int32Array | Uint32Array,
         private readonly _topologyVector?: TopologyVector,
+        private readonly _zBuffer?: Int32Array,
     ) {}
 
     abstract geometryType(index: number): number;
@@ -33,6 +35,11 @@ export abstract class GpuVector implements Iterable<CoordinatesArray> {
         return this._topologyVector;
     }
 
+    /** One z per vertex buffer entry, when the vertices have z coordinates. */
+    get zBuffer(): Int32Array | undefined {
+        return this._zBuffer;
+    }
+
     getGeometries(): CoordinatesArray[] {
         if (!this._topologyVector) {
             return this.triangleGeometries();
@@ -41,7 +48,13 @@ export abstract class GpuVector implements Iterable<CoordinatesArray> {
         for (let i = 0; i < this.numGeometries; i++) {
             types[i] = this.geometryType(i);
         }
-        return createFlatGeometryVector(types, this._topologyVector, undefined, this._vertexBuffer).getGeometries();
+        return createFlatGeometryVector(
+            types,
+            this._topologyVector,
+            undefined,
+            this._vertexBuffer,
+            this._zBuffer,
+        ).getGeometries();
     }
 
     /**
@@ -53,13 +66,18 @@ export abstract class GpuVector implements Iterable<CoordinatesArray> {
         const offsets = this._triangleOffsets;
         const indices = this._indexBuffer;
         const vertices = this._vertexBuffer;
+        const zBuffer = this._zBuffer;
         for (let i = 0; i < this.numGeometries; i++) {
             const rings: CoordinatesArray = [];
             for (let t = offsets[i]; t < offsets[i + 1]; t++) {
                 const ring: Point[] = new Array(4);
                 for (let k = 0; k < 3; k++) {
-                    const vertex = indices[t * 3 + k] * 2;
-                    ring[k] = new Point(vertices[vertex], vertices[vertex + 1]);
+                    const index = indices[t * 3 + k];
+                    const vertex: Vertex = new Point(vertices[index * 2], vertices[index * 2 + 1]);
+                    if (zBuffer !== undefined) {
+                        vertex.z = zBuffer[index];
+                    }
+                    ring[k] = vertex;
                 }
                 ring[3] = ring[0];
                 rings.push(ring);

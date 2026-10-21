@@ -91,6 +91,13 @@ function isTess(layout: GeoLayout02): boolean {
 
 const MAX_GEOMETRY_TYPE = GEOMETRY_TYPE.MULTIPOLYGON;
 
+/** A decoded geometry section. */
+export interface Geometry02 {
+    vector: GeometryVector | GpuVector;
+    /** The z grid's exponent when the vertices are `(x, y, z)` triples. */
+    zStep?: number;
+}
+
 export function decodeGeometry02(
     tile: Uint8Array,
     offset: IntWrapper,
@@ -98,7 +105,7 @@ export function decodeGeometry02(
     layout: GeoLayout02,
     featureCount: number,
     scaling: GeometryScaling | undefined,
-): GeometryVector | GpuVector {
+): Geometry02 {
     const uniform = header.uniformType;
     const types = uniform === undefined ? readTypes(tile, offset, featureCount) : undefined;
     checkTypesFitLayout(types ?? new Uint32Array(featureCount).fill(uniform), layout);
@@ -125,7 +132,7 @@ export function decodeGeometry02(
     }
     // rANS codes each run of vertices in a context of its own: a ring, else a part, else a geometry.
     const runOffsets = topology.ringOffsets ?? topology.partOffsets ?? topology.geometryOffsets;
-    const vertices = decodeVertices02(tile, offset, vertexHeader, scaling, runOffsets);
+    const { vertices, zBuffer } = decodeVertices02(tile, offset, vertexHeader, scaling, runOffsets);
     const vertexCount = countVertices(topology, featureCount);
 
     // A dictionary layout stores the distinct vertices, then one index per vertex into them.
@@ -150,12 +157,16 @@ export function decodeGeometry02(
         );
     }
 
+    const zStep = vertexHeader.zStep;
     if (tessellation !== undefined) {
-        return tessellatedVector(layout, typeOfEach, uniform, tessellation, vertices, topology, vertexHeader.numValues);
+        const vector = tessellatedVector(layout, typeOfEach, uniform, tessellation, vertices, zBuffer, topology);
+        return { vector, zStep };
     }
-    return types === undefined
-        ? createConstGeometryVector(featureCount, uniform, topology, vertexOffsets, vertices)
-        : createFlatGeometryVector(types, topology, vertexOffsets, vertices);
+    const vector =
+        types === undefined
+            ? createConstGeometryVector(featureCount, uniform, topology, vertexOffsets, vertices, zBuffer)
+            : createFlatGeometryVector(types, topology, vertexOffsets, vertices, zBuffer);
+    return { vector, zStep };
 }
 
 /** The triangle streams of a tessellated layout, decoded to an index buffer. */
@@ -193,10 +204,11 @@ function tessellatedVector(
     uniform: GEOMETRY_TYPE | undefined,
     tessellation: Tessellation02,
     vertices: Int32Array,
+    zBuffer: Int32Array | undefined,
     topology: TopologyVector,
-    vertexCount: number,
 ): GeometryVector | GpuVector {
     const { triangleOffsets, indexBuffer } = tessellation;
+    const vertexCount = vertices.length / 2;
     for (let i = 0; i < indexBuffer.length; i++) {
         if (indexBuffer[i] >= vertexCount) {
             throw new Error(`Triangle vertex ${indexBuffer[i]} is past the layer's ${vertexCount} vertices`);
@@ -208,14 +220,22 @@ function tessellatedVector(
     }
     if (layout === GeoLayout02.TessPolygonsWithOutlines) {
         return uniform === undefined
-            ? createFlatGpuVector(types, triangleOffsets, indexBuffer, vertices, topology)
-            : createConstGpuVector(types.length, uniform, triangleOffsets, indexBuffer, vertices, topology);
+            ? createFlatGpuVector(types, triangleOffsets, indexBuffer, vertices, topology, zBuffer)
+            : createConstGpuVector(types.length, uniform, triangleOffsets, indexBuffer, vertices, topology, zBuffer);
     }
     if (polygons !== types.length) {
         throw new Error("A TessPolygons layer holds only polygons");
     }
     // Shells and holes are not stored, so every feature reads back as a multi-polygon.
-    return createConstGpuVector(types.length, GEOMETRY_TYPE.MULTIPOLYGON, triangleOffsets, indexBuffer, vertices);
+    return createConstGpuVector(
+        types.length,
+        GEOMETRY_TYPE.MULTIPOLYGON,
+        triangleOffsets,
+        indexBuffer,
+        vertices,
+        undefined,
+        zBuffer,
+    );
 }
 
 /** The types stream: one geometry type code per feature. */
@@ -321,9 +341,43 @@ function countVertices(topology: TopologyVector, featureCount: number): number {
 }
 
 /**
- * The vertex stream as `(x, y)` pairs. Delta runs one sum over every word, the componentwise
- * encodings keep a predecessor per component; all zigzag-decode and wrap at 32 bits. Morton codes
- * decode to pairs here too, so one vertex buffer shape serves every encoding.
+ * Componentwise delta over `(x, y, z)` triples: a running sum per component, zigzag-decoded and
+ * wrapping at 32 bits.
+ */
+function decodeComponentwiseDeltaVec3(words: Uint32Array): Int32Array {
+    const out = new Int32Array(words.length);
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    for (let i = 0; i < words.length; i += 3) {
+        x = (x + decodeZigZagInt32Value(words[i])) | 0;
+        y = (y + decodeZigZagInt32Value(words[i + 1])) | 0;
+        z = (z + decodeZigZagInt32Value(words[i + 2])) | 0;
+        out[i] = x;
+        out[i + 1] = y;
+        out[i + 2] = z;
+    }
+    return out;
+}
+
+/** Splits interleaved `(x, y, z)` triples into `(x, y)` pairs and one z per vertex. */
+function splitTriples(triples: Int32Array): { vertices: Int32Array; zBuffer: Int32Array } {
+    const count = triples.length / 3;
+    const vertices = new Int32Array(count * 2);
+    const zBuffer = new Int32Array(count);
+    for (let i = 0; i < count; i++) {
+        vertices[2 * i] = triples[3 * i];
+        vertices[2 * i + 1] = triples[3 * i + 1];
+        zBuffer[i] = triples[3 * i + 2];
+    }
+    return { vertices, zBuffer };
+}
+
+/**
+ * The vertex stream as `(x, y)` pairs, plus one z per vertex when the stream holds triples. Delta
+ * runs one sum over every word, the componentwise encodings keep a predecessor per component; all
+ * zigzag-decode and wrap at 32 bits. Morton codes decode to pairs here too, so one vertex buffer
+ * shape serves every encoding. Scaling applies to x and y only.
  */
 function decodeVertices02(
     tile: Uint8Array,
@@ -331,11 +385,10 @@ function decodeVertices02(
     header: StreamHeader02,
     scaling: GeometryScaling | undefined,
     runOffsets: Uint32Array | undefined,
-): Int32Array {
-    if (header.zStep !== undefined) {
-        throw new Error("v2 (x, y, z) vertices are not supported by this decoder yet");
-    }
-    const numWords = header.numValues * 2;
+): { vertices: Int32Array; zBuffer?: Int32Array } {
+    // The header admits only raw, delta and componentwise delta over triples.
+    const xyz = header.zStep !== undefined;
+    const numWords = header.numValues * (xyz ? 3 : 2);
     let vertices: Int32Array;
     switch (header.logical) {
         case "none": {
@@ -356,9 +409,11 @@ function decodeVertices02(
             }
             break;
         }
-        case "cwDelta":
-            vertices = decodeComponentwiseDeltaVec2(readWords32(tile, offset, header, numWords));
+        case "cwDelta": {
+            const words = readWords32(tile, offset, header, numWords);
+            vertices = xyz ? decodeComponentwiseDeltaVec3(words) : decodeComponentwiseDeltaVec2(words);
             break;
+        }
         case "cwDelta2":
             vertices = decodeComponentwiseDelta2Vec2(readWords32(tile, offset, header, numWords));
             break;
@@ -378,11 +433,15 @@ function decodeVertices02(
         default:
             throw new Error(`v2 ${header.logical} vertices are not supported by this decoder yet`);
     }
+    let zBuffer: Int32Array | undefined;
+    if (xyz) {
+        ({ vertices, zBuffer } = splitTriples(vertices));
+    }
     if (scaling?.scale !== undefined) {
         const { scale, min, max } = scaling;
         for (let i = 0; i < vertices.length; i++) {
             vertices[i] = Math.min(max, Math.max(min, Math.round(vertices[i] * scale)));
         }
     }
-    return vertices;
+    return { vertices, zBuffer };
 }

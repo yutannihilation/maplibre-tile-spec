@@ -125,5 +125,5 @@ export function decodeLayer02(
     if (offset.get() !== blockEnd) {
         throw new Error(`Trailing bytes in a v2 layer: body ends at ${offset.get()}, block at ${blockEnd}`);
     }
-    return new FeatureTable(name, geometry, idVector, propertyVectors, header.extent);
+    return new FeatureTable(name, geometry.vector, idVector, propertyVectors, header.extent, geometry.zStep);
 }

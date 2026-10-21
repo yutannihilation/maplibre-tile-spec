@@ -199,6 +199,56 @@ describe("decodeLayer02 - vertex encodings", () => {
     });
 });
 
+describe("decodeLayer02 - z coordinates", () => {
+    // uniform Point, two features (13, 42, 100) and (14, 44, 90), z step code 2 = -1 (decimetres)
+    const cases: [string, number[]][] = [
+        ["raw", [0x01, 0x02, ...le32(26, 84, 200, 28, 88, 180)]],
+        // one running sum over every word: 13, 29, 58, -86, 30, 46
+        ["delta", [0x19, 0x07, 0x02, 26, 58, 116, 0xab, 0x01, 60, 92]],
+        ["componentwise delta", [0x29, 0x07, 0x02, 26, 84, 0xc8, 0x01, 2, 4, 19]],
+    ];
+    it.each(cases)("decodes %s triples", (_label, vertices) => {
+        const [table] = decodeTile(tile([...NAME, 0x10, 0x02, 0x00, ...vertices, 0x00]));
+        expect(table.zStep).toBe(-1);
+        expect(table.getFeatures().map((f) => f.geometry.coordinates[0][0])).toMatchObject([
+            { x: 13, y: 42, z: 100 },
+            { x: 14, y: 44, z: 90 },
+        ]);
+        expect(featureTablesToFeatureCollection([table]).features[1]).toMatchObject({
+            geometry: { type: "Point", coordinates: [14, 44, 90] },
+            properties: { _z_step: -1 },
+        });
+    });
+
+    it("looks z up through a dictionary's offsets", () => {
+        // PointsDict, two distinct raw triples (1, 2, 5) and (5, 6, 7), offsets 1, 0, 1
+        const dict = [0x81, 0x02, 0x02, ...le32(2, 4, 10, 10, 12, 14)];
+        const body = [...NAME, 0x10, 0x03, 0x01, ...dict, 0x00, ...le32(1, 0, 1), 0x00];
+        const coords = decodeTile(tile(body))[0]
+            .getFeatures()
+            .map((f) => f.geometry.coordinates[0][0]);
+        expect(coords).toMatchObject([
+            { x: 5, y: 6, z: 7 },
+            { x: 1, y: 2, z: 5 },
+            { x: 5, y: 6, z: 7 },
+        ]);
+    });
+
+    it("scales x and y but leaves z on its grid", () => {
+        const body = [...NAME, 0x10, 0x01, 0x00, 0x01, 0x02, ...le32(26, 84, 200), 0x00];
+        const [table] = decodeTile(tile(body), { extent: 4096, min: 0, max: 4096 });
+        expect(table.getFeatures()[0].geometry.coordinates[0][0]).toMatchObject({ x: 832, y: 2688, z: 100 });
+    });
+
+    it("gives a layer without z no z step and pairs in GeoJSON", () => {
+        const [table] = decodeTile(tile([...NAME, 0x10, 0x01, 0x00, 0x00, ...le32(26, 84), 0x00]));
+        expect(table.zStep).toBeUndefined();
+        const [feature] = featureTablesToFeatureCollection([table]).features;
+        expect(feature.geometry).toEqual({ type: "Point", coordinates: [13, 42] });
+        expect(feature.properties).not.toHaveProperty("_z_step");
+    });
+});
+
 describe("decodeLayer02 - vertex dictionary", () => {
     // uniform Point, three features, PointsDict: two distinct raw vertices (1, 2) and (5, 6), then offsets
     const DICT = [0x80, 0x02, ...le32(2, 4, 10, 12)];

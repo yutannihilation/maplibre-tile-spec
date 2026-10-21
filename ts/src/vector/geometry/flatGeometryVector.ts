@@ -8,8 +8,17 @@ export function createFlatGeometryVector(
     topologyVector: TopologyVector,
     vertexOffsets: Uint32Array | undefined,
     vertexBuffer: Int32Array | Uint32Array,
+    zBuffer?: Int32Array,
 ): FlatGeometryVector {
-    return new FlatGeometryVector(VertexBufferType.VEC_2, geometryTypes, topologyVector, vertexOffsets, vertexBuffer);
+    return new FlatGeometryVector(
+        VertexBufferType.VEC_2,
+        geometryTypes,
+        topologyVector,
+        vertexOffsets,
+        vertexBuffer,
+        undefined,
+        zBuffer,
+    );
 }
 
 export function createFlatGeometryVectorMortonEncoded(
@@ -37,8 +46,9 @@ export class FlatGeometryVector extends GeometryVector {
         vertexOffsets: Uint32Array | undefined,
         vertexBuffer: Int32Array | Uint32Array,
         mortonSettings?: MortonSettings,
+        zBuffer?: Int32Array,
     ) {
-        super(vertexBufferType, topologyVector, vertexOffsets, vertexBuffer, mortonSettings);
+        super(vertexBufferType, topologyVector, vertexOffsets, vertexBuffer, mortonSettings, zBuffer);
     }
 
     geometryType(index: number): number {

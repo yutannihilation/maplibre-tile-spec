@@ -9,6 +9,7 @@ export function createConstGeometryVector(
     topologyVector: TopologyVector,
     vertexOffsets: Uint32Array | undefined,
     vertexBuffer: Int32Array | Uint32Array,
+    zBuffer?: Int32Array,
 ): ConstGeometryVector {
     return new ConstGeometryVector(
         numGeometries,
@@ -17,6 +18,8 @@ export function createConstGeometryVector(
         topologyVector,
         vertexOffsets,
         vertexBuffer,
+        undefined,
+        zBuffer,
     );
 }
 
@@ -48,8 +51,9 @@ export class ConstGeometryVector extends GeometryVector {
         vertexOffsets: Uint32Array | undefined,
         vertexBuffer: Int32Array | Uint32Array,
         mortonSettings?: MortonSettings,
+        zBuffer?: Int32Array,
     ) {
-        super(vertexBufferType, topologyVector, vertexOffsets, vertexBuffer, mortonSettings);
+        super(vertexBufferType, topologyVector, vertexOffsets, vertexBuffer, mortonSettings, zBuffer);
     }
 
     geometryType(_index: number): number {

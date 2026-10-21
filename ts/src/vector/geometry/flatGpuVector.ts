@@ -7,8 +7,9 @@ export function createFlatGpuVector(
     indexBuffer: Uint32Array,
     vertexBuffer: Int32Array | Uint32Array,
     topologyVector?: TopologyVector,
+    zBuffer?: Int32Array,
 ): GpuVector {
-    return new FlatGpuVector(geometryTypes, triangleOffsets, indexBuffer, vertexBuffer, topologyVector);
+    return new FlatGpuVector(geometryTypes, triangleOffsets, indexBuffer, vertexBuffer, topologyVector, zBuffer);
 }
 
 //TODO: extend from GeometryVector -> make topology vector optional
@@ -19,8 +20,9 @@ export class FlatGpuVector extends GpuVector {
         indexBuffer: Uint32Array,
         vertexBuffer: Int32Array | Uint32Array,
         topologyVector?: TopologyVector,
+        zBuffer?: Int32Array,
     ) {
-        super(triangleOffsets, indexBuffer, vertexBuffer, topologyVector);
+        super(triangleOffsets, indexBuffer, vertexBuffer, topologyVector, zBuffer);
     }
 
     geometryType(index: number): number {
