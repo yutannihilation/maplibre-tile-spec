@@ -17,6 +17,7 @@ import { createConstGpuVector } from "../../vector/geometry/constGpuVector";
 import { createFlatGpuVector } from "../../vector/geometry/flatGpuVector";
 import type { GpuVector } from "../../vector/geometry/gpuVector";
 import { decodeTriangleTrees } from "../triangleTrees";
+import { decodeRansVertices } from "../rans";
 import { decodeZOrderCurve } from "../../vector/geometry/zOrderCurve";
 import { decodeIntStream02, readWords32 } from "./intStream02";
 import { type MortonParams02, readStreamHeader02, type StreamHeader02 } from "./streamHeader02";
@@ -119,7 +120,12 @@ export function decodeGeometry02(
     if (vertexHeader.logical === "morton" && !dictionary) {
         throw new Error("Morton codes are only stored as a vertex dictionary");
     }
-    const vertices = decodeVertices02(tile, offset, vertexHeader, scaling);
+    if (vertexHeader.logical === "rans" && dictionary) {
+        throw new Error("A vertex dictionary cannot be rANS-coded");
+    }
+    // rANS codes each run of vertices in a context of its own: a ring, else a part, else a geometry.
+    const runOffsets = topology.ringOffsets ?? topology.partOffsets ?? topology.geometryOffsets;
+    const vertices = decodeVertices02(tile, offset, vertexHeader, scaling, runOffsets);
     const vertexCount = countVertices(topology, featureCount);
 
     // A dictionary layout stores the distinct vertices, then one index per vertex into them.
@@ -324,6 +330,7 @@ function decodeVertices02(
     offset: IntWrapper,
     header: StreamHeader02,
     scaling: GeometryScaling | undefined,
+    runOffsets: Uint32Array | undefined,
 ): Int32Array {
     if (header.zStep !== undefined) {
         throw new Error("v2 (x, y, z) vertices are not supported by this decoder yet");
@@ -358,6 +365,16 @@ function decodeVertices02(
         case "morton":
             vertices = decodeMortonDeltas(readWords32(tile, offset, header, header.numValues), header.morton);
             break;
+        case "rans": {
+            const start = offset.get();
+            const end = start + header.byteLength;
+            if (end > tile.length) {
+                throw new Error(`Stream payload overruns the tile: ${end} > ${tile.length}`);
+            }
+            vertices = decodeRansVertices(tile.subarray(start, end), runOffsets, header.numValues);
+            offset.set(end);
+            break;
+        }
         default:
             throw new Error(`v2 ${header.logical} vertices are not supported by this decoder yet`);
     }

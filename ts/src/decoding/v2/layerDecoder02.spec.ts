@@ -78,6 +78,15 @@ describe("decodeLayer02 - fixtures", () => {
         "mix_2_poly_mpoly_tri",
         "mix_2_line_poly_tes",
         "mix_3_line_poly_mline_tes",
+        "point_rans",
+        "line_rans",
+        "line_diagonal_rans",
+        "line_wandering_rans",
+        "line_morton_curve_rans",
+        "multiline_rans",
+        "poly_hole_rans",
+        "poly_hole_tes_rans",
+        "mix_pt_line_polyh_rans",
     ])("decodes %s like the reference", (name) => {
         const { tile, expected } = fixture(name);
         const tables = decodeTile(tile, undefined, false);
@@ -145,6 +154,11 @@ describe("decodeLayer02 - layer header", () => {
         // uniform LineString, Lines layout, one part of 3 vertices, but only 2 vertex pairs
         const body = [...NAME, 0x20, 0x01, 0x04, 0x08, 0x01, 0x03, 0x80, 0x02, ...le32(0, 0, 2, 2), 0x00];
         expect(() => decodeTile(tile(body))).toThrow(/vertices/);
+    });
+
+    it("rejects rANS vertices in a dictionary layout", () => {
+        // uniform Point, one feature, PointsDict, rANS vertex stream
+        expect(() => decodeTile(tile([...NAME, 0x10, 0x01, 0x01, 0x50, 0x01, 0x00, 0x00, 0x00]))).toThrow(/rANS/);
     });
 
     it("rejects what later steps decode, rather than reading past it", () => {
