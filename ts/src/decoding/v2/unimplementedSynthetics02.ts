@@ -12,8 +12,9 @@ export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
     "0x02/*_tes*",
     "0x02/*_tri",
     "0x02/*_rans",
-    // float, string, shared dictionary and mixed property columns
-    "0x02/prop_f*",
+    // ALP offsets over FastPFOR
+    "0x02/prop_f64_alp_offset_np",
+    // string, shared dictionary and mixed property columns
     "0x02/prop_str*",
     "0x02/props_str*",
     "0x02/props_shared_dict*",

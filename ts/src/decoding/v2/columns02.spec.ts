@@ -6,8 +6,12 @@ import { featureTablesToFeatureCollection } from "../../vector/featureTablesToGe
 import { DoubleFlatVector } from "../../vector/flat/doubleFlatVector";
 import { Int32FlatVector } from "../../vector/flat/int32FlatVector";
 import { Int64FlatVector } from "../../vector/flat/int64FlatVector";
+import { compareWithTolerance } from "../../../../test/synthetic/synthetic-test-utils";
 
 const SYNTHETIC = resolve(__dirname, "../../../../test/synthetic/0x02");
+
+// The fixtures spell NaN and the infinities as strings, which this tester reads back.
+expect.addEqualityTesters([compareWithTolerance]);
 
 function fixture(name: string): { tile: Uint8Array; expected: GeoJSON.FeatureCollection } {
     return {
@@ -141,6 +145,38 @@ describe("decodeColumns02 - integer and boolean fixtures", () => {
     });
 });
 
+describe("decodeColumns02 - float fixtures", () => {
+    it.each([
+        "prop_f32",
+        "prop_f32_np",
+        "prop_f32_null_val",
+        "prop_f32_alp_np",
+        "prop_f32_alp_whole_np",
+        "prop_f32_dict_nan_np",
+        "prop_f32_dict_distinct_np",
+        "prop_f32_neg_zero_np",
+        "prop_f32_min_norm",
+        "prop_f64",
+        "prop_f64_alp_np",
+        "prop_f64_alp_whole_np",
+        "prop_f64_dict_zeros_np",
+        "prop_f64_max",
+        "prop_f64_nan",
+        "prop_f64_pos_inf_np",
+        "prop_f64_val_null",
+    ])("decodes %s like the reference", (name) => {
+        const { tile, expected } = fixture(name);
+        expect(featureTablesToFeatureCollection(decodeTile(tile, undefined, false))).toEqual(expected);
+    });
+
+    it("keeps singles single and -0.0 signed", () => {
+        const [table] = decodeTile(fixture("prop_f32_np").tile);
+        expect(table.getPropertyVector("val").getValue(0)).toBe(Math.fround(3.14));
+        const [zeros] = decodeTile(fixture("prop_f32_neg_zero_np").tile);
+        expect(Object.is(zeros.getPropertyVector("val").getValue(0), -0)).toBe(true);
+    });
+});
+
 describe("decodeColumns02 - column headers", () => {
     it("rejects a second id column", () => {
         // two Id columns, each one raw word with the byte length omitted
@@ -163,7 +199,7 @@ describe("decodeColumns02 - column headers", () => {
     });
 
     it("rejects what later steps decode, rather than reading past it", () => {
-        expect(() => decodeTile(pointLayer(1, 1, [0x09, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
+        expect(() => decodeTile(pointLayer(1, 1, [0x0b, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
         expect(() => decodeTile(pointLayer(1, 1, [0x0f, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
     });
 });

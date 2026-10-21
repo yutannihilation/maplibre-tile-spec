@@ -3,11 +3,13 @@ import { unpackNullable, unpackNullableBoolean } from "../unpackNullableUtils";
 import BitVector from "../../vector/flat/bitVector";
 import { BooleanFlatVector } from "../../vector/flat/booleanFlatVector";
 import { DoubleFlatVector } from "../../vector/flat/doubleFlatVector";
+import { FloatFlatVector } from "../../vector/flat/floatFlatVector";
 import { Int32FlatVector } from "../../vector/flat/int32FlatVector";
 import { Int64FlatVector } from "../../vector/flat/int64FlatVector";
 import type { IdVector } from "../../vector/idVector";
 import type Vector from "../../vector/vector";
 import { readString02, readU8 } from "./bytes02";
+import { decodeFloatStream02 } from "./floatStream02";
 import { decodeIntStream02 } from "./intStream02";
 import type { DecodeOptions02 } from "./layerDecoder02";
 import { parsePresenceNibble02, presentCount, readBoolStream02, readPresence02 } from "./presence02";
@@ -93,6 +95,10 @@ export function decodeColumns02(
             case DataType02.Int64:
             case DataType02.UInt64:
                 propertyVectors.push(decodeIntColumn(tile, offset, header, ctx));
+                break;
+            case DataType02.Float:
+            case DataType02.Double:
+                propertyVectors.push(decodeFloatColumn(tile, offset, header, ctx));
                 break;
             default:
                 throw new Error(`v2 ${DataType02[dataType]} columns are not supported by this decoder yet`);
@@ -212,4 +218,20 @@ function decodeIntColumn(tile: Uint8Array, offset: IntWrapper, header: ColumnHea
         unpackNullable(values as Int32Array | Uint32Array, header.presence ?? null, 0),
         size,
     );
+}
+
+/** A float or double column: raw, ALP or dictionary-coded values, one per present feature. */
+function decodeFloatColumn(tile: Uint8Array, offset: IntWrapper, header: ColumnHeader02, ctx: LayerContext02): Vector {
+    const wide = header.dataType === DataType02.Double;
+    const stream = readStreamHeader02(tile, offset, wide ? "float64" : "float32", header.dataCount);
+    const values = decodeFloatStream02(tile, offset, stream);
+    if (values.length !== header.dataCount) {
+        throw new Error(
+            `Column "${header.name}" holds ${values.length} values for ${header.dataCount} present features`,
+        );
+    }
+    const size = header.presence ?? ctx.featureCount;
+    return wide
+        ? new DoubleFlatVector(header.name, unpackNullable(values as Float64Array, header.presence ?? null, 0), size)
+        : new FloatFlatVector(header.name, unpackNullable(values as Float32Array, header.presence ?? null, 0), size);
 }
