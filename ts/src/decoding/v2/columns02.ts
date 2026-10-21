@@ -16,6 +16,7 @@ import type { DecodeOptions02 } from "./layerDecoder02";
 import { parsePresenceNibble02, presentCount, readBoolStream02, readPresence02 } from "./presence02";
 import { readStreamHeader02 } from "./streamHeader02";
 import { decodeSharedDict02, decodeStringColumn02 } from "./stringStream02";
+import { decodeNestedColumn02 } from "./nested02";
 
 /**
  * The counted columns of a v2 layer (`docs/specification/v2.md#columns`): each a type byte, a name
@@ -120,14 +121,62 @@ export function decodeColumns02(
                     ),
                 );
                 break;
-            default:
-                throw new Error(`v2 ${DataType02[dataType]} columns are not supported by this decoder yet`);
+            case DataType02.Struct:
+            case DataType02.List:
+            case DataType02.Map:
+                propertyVectors.push(
+                    decodeNestedColumn02(
+                        tile,
+                        offset,
+                        dataType,
+                        header.name,
+                        header.presence,
+                        header.dataCount,
+                        ctx.featureCount,
+                        ctx.options,
+                    ),
+                );
+                break;
         }
         if (header.name !== "" || dataType > DataType02.LongId) {
             claimName(names, header.name);
         }
     }
     return { idVector, propertyVectors, names };
+}
+
+/**
+ * The values a scalar or string stream set holds, `count` of them with no nulls among them, as a
+ * nested leaf or an m-value column reads them.
+ */
+export function decodeLeafValues02(
+    tile: Uint8Array,
+    offset: IntWrapper,
+    dataType: DataType02,
+    name: string,
+    count: number,
+    options: DecodeOptions02,
+): Vector {
+    const header: ColumnHeader02 = { dataType, name, presence: undefined, dataCount: count };
+    const ctx: LayerContext02 = { featureCount: count, sharedPresence: [], options };
+    switch (dataType) {
+        case DataType02.Bool:
+            return decodeBoolColumn(tile, offset, header, ctx);
+        case DataType02.Int8:
+        case DataType02.UInt8:
+        case DataType02.Int32:
+        case DataType02.UInt32:
+        case DataType02.Int64:
+        case DataType02.UInt64:
+            return decodeIntColumn(tile, offset, header, ctx);
+        case DataType02.Float:
+        case DataType02.Double:
+            return decodeFloatColumn(tile, offset, header, ctx);
+        case DataType02.String:
+            return decodeStringColumn02(tile, offset, name, count, undefined, count);
+        default:
+            throw new Error(`${DataType02[dataType]} is not a scalar or string type`);
+    }
 }
 
 function claimName(names: Set<string>, name: string): void {
@@ -177,24 +226,7 @@ export function decodeMValueColumns02(
         }
 
         // The values are flat: one per vertex, with no nulls among them.
-        const values: ColumnHeader02 = { dataType, name: header.name, presence: undefined, dataCount: valueCount };
-        const valueCtx: LayerContext02 = { ...ctx, featureCount: valueCount };
-        let vector: Vector;
-        switch (dataType) {
-            case DataType02.Bool:
-                vector = decodeBoolColumn(tile, offset, values, valueCtx);
-                break;
-            case DataType02.Float:
-            case DataType02.Double:
-                vector = decodeFloatColumn(tile, offset, values, valueCtx);
-                break;
-            case DataType02.String:
-                vector = decodeStringColumn02(tile, offset, header.name, valueCount, undefined, valueCount);
-                break;
-            default:
-                vector = decodeIntColumn(tile, offset, values, valueCtx);
-                break;
-        }
+        const vector = decodeLeafValues02(tile, offset, dataType, header.name, valueCount, ctx.options);
         columns.push(new MValueColumn(vector, starts, header.presence));
     }
     return columns;

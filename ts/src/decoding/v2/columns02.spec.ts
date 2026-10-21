@@ -268,9 +268,4 @@ describe("decodeColumns02 - column headers", () => {
         const [table] = decodeTile(tile(body));
         expect([0, 1].map((i) => table.idVector.getValue(i))).toEqual([null, 7]);
     });
-
-    it("rejects what later steps decode, rather than reading past it", () => {
-        expect(() => decodeTile(pointLayer(1, 1, [0x0c, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
-        expect(() => decodeTile(pointLayer(1, 1, [0x0d, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
-    });
 });

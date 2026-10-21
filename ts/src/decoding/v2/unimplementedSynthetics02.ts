@@ -6,7 +6,4 @@
  * encoder's round-trip suite that each still fails to round-trip, so an entry that starts
  * working fails both until it is removed. Remove entries as v2 support lands; add none.
  */
-export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
-    // v2-only data: nested properties
-    "0x02/nested_*",
-];
+export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [];

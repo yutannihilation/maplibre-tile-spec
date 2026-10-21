@@ -160,11 +160,6 @@ describe("decodeLayer02 - layer header", () => {
         // uniform Point, one feature, PointsDict, rANS vertex stream
         expect(() => decodeTile(tile([...NAME, 0x10, 0x01, 0x01, 0x50, 0x01, 0x00, 0x00, 0x00]))).toThrow(/rANS/);
     });
-
-    it("rejects what later steps decode, rather than reading past it", () => {
-        // one counted column of a type a later step decodes
-        expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x01, 0x0c, 0x00]))).toThrow(/not supported/);
-    });
 });
 
 describe("decodeLayer02 - vertex encodings", () => {
