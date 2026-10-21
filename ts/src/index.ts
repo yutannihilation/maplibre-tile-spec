@@ -7,7 +7,8 @@ export { default as GeometryScaling } from "./decoding/geometryScaling";
 export { GEOMETRY_TYPE } from "./vector/geometry/geometryType";
 export type { TileSetMetadata } from "./metadata/tileset/tilesetMetadata";
 export type { Geometry } from "./vector/geometry/geometryVector";
-export type { Vertex } from "./vector/geometry/zCoordinates";
+export type { Vertex } from "./vector/geometry/vertexSequence";
+export { MValueColumn } from "./vector/mValueColumn";
 export type { Feature } from "./vector/featureTable";
 export type { MapEncodingOptions } from "./encoding/mapPropertyEncoder";
 export type {

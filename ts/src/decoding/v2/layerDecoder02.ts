@@ -3,7 +3,9 @@ import type GeometryScaling from "../geometryScaling";
 import FeatureTable from "../../vector/featureTable";
 import type { GEOMETRY_TYPE } from "../../vector/geometry/geometryType";
 import { readString02, readU8, readVarint32, readVarint64 } from "./bytes02";
-import { decodeColumns02 } from "./columns02";
+import { decodeColumns02, decodeMValueColumns02 } from "./columns02";
+import { featureVertexCounts } from "../../vector/geometry/vertexSequence";
+import type { MValueColumn } from "../../vector/mValueColumn";
 import { allowsMValues, decodeGeometry02, type GeoLayout02, parseGeoLayout02 } from "./geometry02";
 import { readSharedPresence02 } from "./presence02";
 
@@ -113,17 +115,25 @@ export function decodeLayer02(
     const geometry = decodeGeometry02(tile, offset, header, layout.geometry, featureCount, scaling);
 
     const counts = readColumnCounts02(tile, offset, header.mValues);
-    const { idVector, propertyVectors } = decodeColumns02(tile, offset, counts.columns, {
-        featureCount,
-        sharedPresence,
-        options,
-    });
+    const ctx = { featureCount, sharedPresence, options };
+    const { idVector, propertyVectors, names } = decodeColumns02(tile, offset, counts.columns, ctx);
+    let mValueColumns: MValueColumn[] = [];
     if (header.mValues) {
-        throw new Error("v2 m-values are not supported by this decoder yet");
+        // The geometry is the only place each feature's vertex count can be read from.
+        const vertexCounts = featureVertexCounts(geometry.vector.getGeometries());
+        mValueColumns = decodeMValueColumns02(tile, offset, counts.mValues, ctx, names, vertexCounts);
     }
 
     if (offset.get() !== blockEnd) {
         throw new Error(`Trailing bytes in a v2 layer: body ends at ${offset.get()}, block at ${blockEnd}`);
     }
-    return new FeatureTable(name, geometry.vector, idVector, propertyVectors, header.extent, geometry.zStep);
+    return new FeatureTable(
+        name,
+        geometry.vector,
+        idVector,
+        propertyVectors,
+        header.extent,
+        geometry.zStep,
+        mValueColumns,
+    );
 }

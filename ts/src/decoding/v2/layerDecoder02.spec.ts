@@ -249,6 +249,42 @@ describe("decodeLayer02 - z coordinates", () => {
     });
 });
 
+describe("decodeLayer02 - m-values", () => {
+    // uniform LineString with the m-value bit, two features of two vertices each (Lines layout)
+    const GEOMETRY = [0xa0, 0x02, 0x04, 0x00, ...le32(2, 2), 0x80, 0x04, ...le32(2, 4, 6, 8, 10, 12, 14, 16)];
+    const DIST = [0x04, ...Buffer.from("dist")];
+    // an unsigned 32-bit m-value column named `dist`, every feature present
+    const mColumn = (stream: number[]) => [0x06, ...DIST, ...stream];
+
+    it("cuts the flat values into one run per feature", () => {
+        // column counts: no counted columns, one m-value column on bit 1
+        const body = [...NAME, ...GEOMETRY, 0x02, ...mColumn([0x80, 0x04, ...le32(1, 2, 3, 4)])];
+        const [table] = decodeTile(tile(body));
+        expect(table.mValueColumns.map((c) => c.name)).toEqual(["dist"]);
+        expect(table.getFeatures().map((f) => f.properties["m:dist"])).toEqual([
+            [1, 2],
+            [3, 4],
+        ]);
+    });
+
+    it("rejects a leading stream without an explicit count, and a count the geometry disagrees with", () => {
+        expect(() => decodeTile(tile([...NAME, ...GEOMETRY, 0x02, ...mColumn([0x00, ...le32(1, 2, 3, 4)])]))).toThrow(
+            /value count/,
+        );
+        expect(() =>
+            decodeTile(tile([...NAME, ...GEOMETRY, 0x02, ...mColumn([0x80, 0x03, ...le32(1, 2, 3)])])),
+        ).toThrow(/3 values for 4/);
+    });
+
+    it("rejects a structured data type, and a name a counted column already took", () => {
+        expect(() => decodeTile(tile([...NAME, ...GEOMETRY, 0x02, 0x0c, ...DIST]))).toThrow(/m-value column cannot/);
+        // one counted column `dist` (bit 0) and one m-value column (bit 1)
+        const property = [0x06, ...DIST, 0x00, ...le32(7, 8)];
+        const body = [...NAME, ...GEOMETRY, 0x03, ...property, ...mColumn([0x80, 0x04, ...le32(1, 2, 3, 4)])];
+        expect(() => decodeTile(tile(body))).toThrow(/repeated/);
+    });
+});
+
 describe("decodeLayer02 - vertex dictionary", () => {
     // uniform Point, three features, PointsDict: two distinct raw vertices (1, 2) and (5, 6), then offsets
     const DICT = [0x80, 0x02, ...le32(2, 4, 10, 12)];

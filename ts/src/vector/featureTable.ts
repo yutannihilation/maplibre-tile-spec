@@ -6,6 +6,7 @@ import { DoubleFlatVector } from "./flat/doubleFlatVector";
 import { Int32SequenceVector } from "./sequence/int32SequenceVector";
 import { Int32ConstVector } from "./constant/int32ConstVector";
 import type { GpuVector } from "./geometry/gpuVector";
+import type { MValueColumn } from "./mValueColumn";
 
 export interface Feature {
     id: number | bigint | undefined;
@@ -23,6 +24,7 @@ export default class FeatureTable {
         private readonly _propertyVectors?: Vector[],
         private readonly _extent = 4096,
         private readonly _zStep?: number,
+        private readonly _mValueColumns: MValueColumn[] = [],
     ) {
         if (_name.length === 0) {
             throw new Error("Missing layer name");
@@ -69,6 +71,11 @@ export default class FeatureTable {
         return this._zStep;
     }
 
+    /** The v2 m-value columns: values measured at each vertex rather than at each feature. */
+    get mValueColumns(): MValueColumn[] {
+        return this._mValueColumns;
+    }
+
     /**
      * Returns all features as an array
      */
@@ -96,6 +103,13 @@ export default class FeatureTable {
                 const propertyValue = propertyColumn.getValue(i);
                 if (propertyValue !== null) {
                     properties[columnName] = propertyValue;
+                }
+            }
+            // A feature's m-values are one value per vertex, under the column's name prefixed `m:`.
+            for (const mValueColumn of this._mValueColumns) {
+                const values = mValueColumn.getValues(i);
+                if (values !== null) {
+                    properties[`m:${mValueColumn.name}`] = values;
                 }
             }
 

@@ -7,8 +7,6 @@
  * working fails both until it is removed. Remove entries as v2 support lands; add none.
  */
 export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
-    // v2-only data: m-values, nested properties
-    "0x02/mvalues*",
+    // v2-only data: nested properties
     "0x02/nested_*",
-    "0x02/z_mvalues",
 ];

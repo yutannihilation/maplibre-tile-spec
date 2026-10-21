@@ -1,7 +1,7 @@
 import { GEOMETRY_TYPE } from "./geometry/geometryType";
 import { classifyRings } from "./geometry/classifyRings";
 import type { Geometry } from "./geometry/geometryVector";
-import type { Vertex } from "./geometry/zCoordinates";
+import type { Vertex } from "./geometry/vertexSequence";
 import type FeatureTable from "./featureTable";
 
 /**

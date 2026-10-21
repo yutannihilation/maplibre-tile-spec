@@ -7,6 +7,7 @@ import { FloatFlatVector } from "../../vector/flat/floatFlatVector";
 import { Int32FlatVector } from "../../vector/flat/int32FlatVector";
 import { Int64FlatVector } from "../../vector/flat/int64FlatVector";
 import type { IdVector } from "../../vector/idVector";
+import { MValueColumn } from "../../vector/mValueColumn";
 import type Vector from "../../vector/vector";
 import { readString02, readU8 } from "./bytes02";
 import { decodeFloatStream02 } from "./floatStream02";
@@ -51,6 +52,8 @@ export interface LayerContext02 {
 export interface DecodedColumns02 {
     idVector: IdVector | undefined;
     propertyVectors: Vector[];
+    /** Every column name the layer used, which its m-value columns share one namespace with. */
+    names: Set<string>;
 }
 
 /** A column's presence over the layer's features: undefined when every feature has a value. */
@@ -76,10 +79,7 @@ export function decodeColumns02(
         const dataType = typeByte & 0x0f;
         if (dataType === DataType02.SharedDict) {
             for (const child of decodeSharedDict02(tile, offset, typeByte, ctx.featureCount, ctx.sharedPresence)) {
-                if (names.has(child.name)) {
-                    throw new Error(`Column name "${child.name}" is repeated`);
-                }
-                names.add(child.name);
+                claimName(names, child.name);
                 propertyVectors.push(child);
             }
             continue;
@@ -124,13 +124,80 @@ export function decodeColumns02(
                 throw new Error(`v2 ${DataType02[dataType]} columns are not supported by this decoder yet`);
         }
         if (header.name !== "" || dataType > DataType02.LongId) {
-            if (names.has(header.name)) {
-                throw new Error(`Column name "${header.name}" is repeated`);
-            }
-            names.add(header.name);
+            claimName(names, header.name);
         }
     }
-    return { idVector, propertyVectors };
+    return { idVector, propertyVectors, names };
+}
+
+function claimName(names: Set<string>, name: string): void {
+    if (names.has(name)) {
+        throw new Error(`Column name "${name}" is repeated`);
+    }
+    names.add(name);
+}
+
+/**
+ * The m-value section (`docs/specification/v2.md#m-values`): columns over the layer's vertex
+ * sequence. Each reads the streams a property column of its data type reads, over one value per
+ * vertex of every feature its presence marks, so `vertexCounts` gives the count the geometry
+ * expects. The leading stream must spell that count out, and it must agree with the geometry.
+ */
+export function decodeMValueColumns02(
+    tile: Uint8Array,
+    offset: IntWrapper,
+    columnCount: number,
+    ctx: LayerContext02,
+    names: Set<string>,
+    vertexCounts: Uint32Array,
+): MValueColumn[] {
+    const columns: MValueColumn[] = [];
+    for (let i = 0; i < columnCount; i++) {
+        const typeByte = readU8(tile, offset, `M-value column ${i} type byte`);
+        const dataType = typeByte & 0x0f;
+        if (dataType < DataType02.Bool || dataType > DataType02.String) {
+            throw new Error(`An m-value column cannot hold ${DataType02[dataType]}; a vertex carries a scalar`);
+        }
+        const header = readColumnHeader(tile, offset, typeByte, dataType, ctx);
+        claimName(names, header.name);
+
+        const starts = new Uint32Array(ctx.featureCount + 1);
+        let valueCount = 0;
+        for (let f = 0; f < ctx.featureCount; f++) {
+            if (header.presence === undefined || header.presence.get(f)) {
+                valueCount += vertexCounts[f];
+            }
+            starts[f + 1] = valueCount;
+        }
+        if (offset.get() >= tile.length) {
+            throw new Error(`M-value column "${header.name}" ends before its data stream`);
+        }
+        if ((tile[offset.get()] & 0x80) === 0) {
+            throw new Error(`M-value column "${header.name}" must write its value count in its leading stream`);
+        }
+
+        // The values are flat: one per vertex, with no nulls among them.
+        const values: ColumnHeader02 = { dataType, name: header.name, presence: undefined, dataCount: valueCount };
+        const valueCtx: LayerContext02 = { ...ctx, featureCount: valueCount };
+        let vector: Vector;
+        switch (dataType) {
+            case DataType02.Bool:
+                vector = decodeBoolColumn(tile, offset, values, valueCtx);
+                break;
+            case DataType02.Float:
+            case DataType02.Double:
+                vector = decodeFloatColumn(tile, offset, values, valueCtx);
+                break;
+            case DataType02.String:
+                vector = decodeStringColumn02(tile, offset, header.name, valueCount, undefined, valueCount);
+                break;
+            default:
+                vector = decodeIntColumn(tile, offset, values, valueCtx);
+                break;
+        }
+        columns.push(new MValueColumn(vector, starts, header.presence));
+    }
+    return columns;
 }
 
 /** The name, unless the column is the id, and the presence the type byte's high nibble names. */

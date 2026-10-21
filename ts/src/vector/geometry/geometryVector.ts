@@ -1,6 +1,6 @@
 import { convertGeometryVector } from "./geometryVectorConverter";
 import { decodeZOrderCurve } from "./zOrderCurve";
-import { attachZ } from "./zCoordinates";
+import { attachZ } from "./vertexSequence";
 import type Point from "@mapbox/point-geometry";
 import type { GEOMETRY_TYPE } from "./geometryType";
 import type { VertexBufferType } from "./vertexBufferType";

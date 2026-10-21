@@ -2,7 +2,7 @@ import Point from "@mapbox/point-geometry";
 import { createFlatGeometryVector } from "./flatGeometryVector";
 import type { CoordinatesArray } from "./geometryVector";
 import type { TopologyVector } from "./topologyVector";
-import type { Vertex } from "./zCoordinates";
+import type { Vertex } from "./vertexSequence";
 
 export abstract class GpuVector implements Iterable<CoordinatesArray> {
     protected constructor(
