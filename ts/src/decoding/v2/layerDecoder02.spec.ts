@@ -133,7 +133,7 @@ describe("decodeLayer02 - layer header", () => {
         // a TessPolygons layout
         expect(() => decodeTile(tile([...NAME, 0x30, 0x00, 0x0c, 0x00, 0x00, 0x00]))).toThrow(/not supported/);
         // one counted column of a type a later step decodes
-        expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x01, 0x05, 0x00]))).toThrow(/not supported/);
+        expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x01, 0x09, 0x00]))).toThrow(/not supported/);
     });
 });
 

@@ -12,11 +12,12 @@ export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
     "0x02/*_tes*",
     "0x02/*_tri",
     "0x02/*_rans",
-    // property columns and presence
-    "0x02/prop_*",
-    "0x02/props_*",
-    "0x02/presence_*",
-    "0x02/bool_*",
+    // float, string, shared dictionary and mixed property columns
+    "0x02/prop_f*",
+    "0x02/prop_str*",
+    "0x02/props_str*",
+    "0x02/props_shared_dict*",
+    "0x02/props_mixed*",
     // v2-only data: m-values, nested properties, z coordinates
     "0x02/mvalues*",
     "0x02/nested_*",

@@ -1,6 +1,7 @@
 import type IntWrapper from "../intWrapper";
-import { unpackNullable } from "../unpackNullableUtils";
-import type BitVector from "../../vector/flat/bitVector";
+import { unpackNullable, unpackNullableBoolean } from "../unpackNullableUtils";
+import BitVector from "../../vector/flat/bitVector";
+import { BooleanFlatVector } from "../../vector/flat/booleanFlatVector";
 import { DoubleFlatVector } from "../../vector/flat/doubleFlatVector";
 import { Int32FlatVector } from "../../vector/flat/int32FlatVector";
 import { Int64FlatVector } from "../../vector/flat/int64FlatVector";
@@ -9,7 +10,7 @@ import type Vector from "../../vector/vector";
 import { readString02, readU8 } from "./bytes02";
 import { decodeIntStream02 } from "./intStream02";
 import type { DecodeOptions02 } from "./layerDecoder02";
-import { parsePresenceNibble02, presentCount, readPresence02 } from "./presence02";
+import { parsePresenceNibble02, presentCount, readBoolStream02, readPresence02 } from "./presence02";
 import { readStreamHeader02 } from "./streamHeader02";
 
 /**
@@ -69,7 +70,7 @@ export function decodeColumns02(
     const names = new Set<string>();
     for (let i = 0; i < columnCount; i++) {
         const typeByte = readU8(tile, offset, `Column ${i} type byte`);
-        const dataType = (typeByte & 0x0f);
+        const dataType = typeByte & 0x0f;
         if (dataType === DataType02.SharedDict) {
             throw new Error("v2 shared dictionary columns are not supported by this decoder yet");
         }
@@ -81,6 +82,17 @@ export function decodeColumns02(
                     throw new Error("A layer has at most one id column");
                 }
                 idVector = decodeIdColumn(tile, offset, header, ctx);
+                break;
+            case DataType02.Bool:
+                propertyVectors.push(decodeBoolColumn(tile, offset, header, ctx));
+                break;
+            case DataType02.Int8:
+            case DataType02.UInt8:
+            case DataType02.Int32:
+            case DataType02.UInt32:
+            case DataType02.Int64:
+            case DataType02.UInt64:
+                propertyVectors.push(decodeIntColumn(tile, offset, header, ctx));
                 break;
             default:
                 throw new Error(`v2 ${DataType02[dataType]} columns are not supported by this decoder yet`);
@@ -142,4 +154,62 @@ function decodeIdColumn(tile: Uint8Array, offset: IntWrapper, header: ColumnHead
         doubles[i] = Number(ids[i]);
     }
     return new DoubleFlatVector("id", doubles, size);
+}
+
+/** A boolean column: one `Bool`-family stream of a bit per present feature. */
+function decodeBoolColumn(
+    tile: Uint8Array,
+    offset: IntWrapper,
+    header: ColumnHeader02,
+    ctx: LayerContext02,
+): BooleanFlatVector {
+    const stream = readStreamHeader02(tile, offset, "bool", header.dataCount);
+    const bits = readBoolStream02(tile, offset, stream);
+    if (bits.size() !== header.dataCount) {
+        throw new Error(`Column "${header.name}" holds ${bits.size()} values for ${header.dataCount} present features`);
+    }
+    const size = header.presence ?? ctx.featureCount;
+    const unpacked = unpackNullableBoolean(bits.getBuffer(), bits.size(), header.presence ?? null);
+    return new BooleanFlatVector(header.name, new BitVector(unpacked, ctx.featureCount), size);
+}
+
+const INT_RANGES: Partial<Record<DataType02, [number, number]>> = {
+    [DataType02.Int8]: [-128, 127],
+    [DataType02.UInt8]: [0, 255],
+};
+
+/** An integer column: one stream of 32 or 64-bit words, signed or not by the data type. */
+function decodeIntColumn(tile: Uint8Array, offset: IntWrapper, header: ColumnHeader02, ctx: LayerContext02): Vector {
+    const { dataType } = header;
+    const wide = dataType === DataType02.Int64 || dataType === DataType02.UInt64;
+    const signed = dataType === DataType02.Int8 || dataType === DataType02.Int32 || dataType === DataType02.Int64;
+    const stream = readStreamHeader02(tile, offset, wide ? "int64" : "int32", header.dataCount);
+    const values = decodeIntStream02(tile, offset, stream, signed);
+    if (values.length !== header.dataCount) {
+        throw new Error(
+            `Column "${header.name}" holds ${values.length} values for ${header.dataCount} present features`,
+        );
+    }
+    const range = INT_RANGES[dataType];
+    if (range !== undefined) {
+        for (let i = 0; i < values.length; i++) {
+            const value = values[i] as number;
+            if (value < range[0] || value > range[1]) {
+                throw new Error(`Column "${header.name}" holds ${value}, outside its ${DataType02[dataType]} range`);
+            }
+        }
+    }
+    const size = header.presence ?? ctx.featureCount;
+    if (wide) {
+        return new Int64FlatVector(
+            header.name,
+            unpackNullable(values as BigInt64Array | BigUint64Array, header.presence ?? null, 0n),
+            size,
+        );
+    }
+    return new Int32FlatVector(
+        header.name,
+        unpackNullable(values as Int32Array | Uint32Array, header.presence ?? null, 0),
+        size,
+    );
 }

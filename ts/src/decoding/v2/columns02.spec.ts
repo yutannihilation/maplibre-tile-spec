@@ -77,6 +77,70 @@ describe("decodeColumns02 - id fixtures", () => {
     });
 });
 
+describe("decodeColumns02 - integer and boolean fixtures", () => {
+    it.each([
+        "prop_i8",
+        "prop_i8_min_np",
+        "prop_i8_null_val",
+        "prop_u8_max",
+        "prop_u8_delta_rle",
+        "prop_i32_neg",
+        "prop_i32_rle_np",
+        "prop_u32_max",
+        "prop_i64_min",
+        "prop_u64_max_np",
+        "prop_u64_delta",
+        "props_i32_delta_rle",
+        "props_u64",
+        "prop_bool",
+        "prop_bool_null_true",
+        "prop_bool_false_np",
+        "bool_runs",
+        "bool_sparse",
+        "presence_bitmap",
+        "presence_runs",
+        "presence_sparse",
+        "presence_mixed",
+        "presence_shared_bitmap",
+        "presence_shared_runs",
+        "presence_shared_sparse",
+        "props_sp",
+        "props_sp_id",
+        "props_sp_max",
+        "props_sp_mixed",
+        "prop_empty_name",
+        "prop_special_name_np",
+    ])("decodes %s like the reference", (name) => {
+        const { tile, expected } = fixture(name);
+        expect(featureTablesToFeatureCollection(decodeTile(tile, undefined, false))).toEqual(expected);
+    });
+
+    it("keeps 64-bit values as bigint and narrow ones as number", () => {
+        const [table] = decodeTile(fixture("prop_i64_min").tile);
+        expect(table.getPropertyVector("val").getValue(0)).toBe(-9223372036854775808n);
+        const [bytes] = decodeTile(fixture("prop_u8_max").tile);
+        expect(bytes.getPropertyVector("val").getValue(0)).toBe(255);
+    });
+
+    it("rejects a value outside an 8-bit column's range", () => {
+        // Int8 column "v", one raw varint word 200 = zigzag of 100... use 0xc8 0x01 = 200 -> zigzag 100: in range;
+        // 0x90 0x03 = 400 -> zigzag 200: out of range
+        expect(() => decodeTile(pointLayer(1, 1, [0x03, 0x01, 0x76, 0x08, 0x02, 0x90, 0x03]))).toThrow(/range/);
+        expect(() => decodeTile(pointLayer(1, 1, [0x04, 0x01, 0x76, 0x08, 0x02, 0x80, 0x02]))).toThrow(/range/);
+    });
+
+    it("rejects a repeated column name", () => {
+        const column = [0x05, 0x01, 0x76, 0x08, 0x01, 0x02];
+        expect(() => decodeTile(pointLayer(1, 2, [...column, ...column]))).toThrow(/repeated/);
+    });
+
+    it("places boolean values at their features around the absent ones", () => {
+        const [table] = decodeTile(fixture("prop_bool_null_true").tile);
+        const flags = table.getPropertyVector("val");
+        expect([0, 1].map((i) => flags.getValue(i))).toEqual([null, true]);
+    });
+});
+
 describe("decodeColumns02 - column headers", () => {
     it("rejects a second id column", () => {
         // two Id columns, each one raw word with the byte length omitted
@@ -99,7 +163,7 @@ describe("decodeColumns02 - column headers", () => {
     });
 
     it("rejects what later steps decode, rather than reading past it", () => {
-        expect(() => decodeTile(pointLayer(1, 1, [0x05, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
+        expect(() => decodeTile(pointLayer(1, 1, [0x09, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
         expect(() => decodeTile(pointLayer(1, 1, [0x0f, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
     });
 });
