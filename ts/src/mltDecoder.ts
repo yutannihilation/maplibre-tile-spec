@@ -22,6 +22,7 @@ import type { IdVector } from "./vector/idVector";
 import { decodeVarintInt32 } from "./decoding/integerDecodingUtils";
 import { decodeGeometryColumn } from "./decoding/geometryDecoder";
 import { decodePropertyColumn } from "./decoding/propertyDecoder";
+import { decodeLayer02 } from "./decoding/v2/layerDecoder02";
 import { Int32ConstVector } from "./vector/constant/int32ConstVector";
 import { Int64ConstVector } from "./vector/constant/int64ConstVector";
 import type GeometryScaling from "./decoding/geometryScaling";
@@ -35,8 +36,10 @@ import type Vector from "./vector/vector";
 import type { GpuVector } from "./vector/geometry/gpuVector";
 
 /**
- * Decodes a tile with embedded metadata (Tag 0x01 format).
- * This is the primary decoder function for MLT tiles.
+ * Decodes an MLT tile, one `FeatureTable` per layer.
+ *
+ * Each block is dispatched on its tag: `0x01` layers carry embedded metadata and are decoded
+ * here, `0x02` layers go to `decodeLayer02`, and any other tag is skipped.
  *
  * @param tile The tile data to decode (will be decompressed if gzip-compressed)
  * @param geometryScaling Optional geometry scaling parameters
@@ -59,7 +62,12 @@ export default function decodeTile(
         }
 
         const tag = decodeVarintInt32(tile, offset, 1)[0] >>> 0;
-        if (tag !== 1 && tag !== 2) {
+        if (tag === 2) {
+            featureTables.push(decodeLayer02(tile, offset, blockEnd, { geometryScaling, idWithinMaxSafeInteger }));
+            offset.set(blockEnd);
+            continue;
+        }
+        if (tag !== 1) {
             // Skip unknown block types
             offset.set(blockEnd);
             continue;
