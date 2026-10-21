@@ -5,6 +5,7 @@ import decodeTile from "../../mltDecoder";
 import { featureTablesToFeatureCollection } from "../../vector/featureTablesToGeoJson";
 import { GEOMETRY_TYPE } from "../../vector/geometry/geometryType";
 import type { GeometryVector } from "../../vector/geometry/geometryVector";
+import type { GpuVector } from "../../vector/geometry/gpuVector";
 
 const SYNTHETIC = resolve(__dirname, "../../../../test/synthetic/0x02");
 
@@ -64,6 +65,19 @@ describe("decodeLayer02 - fixtures", () => {
         "poly_hole_fpf",
         "poly_collinear_fpf",
         "poly_self_intersect_fpf",
+        "poly_tri",
+        "poly_tes",
+        "poly_hole_tes",
+        "poly_hole_tri",
+        "poly_multi_tes",
+        "poly_multi_tri",
+        "poly_fpf_tes",
+        "poly_self_intersect_tri",
+        "poly_morton_ring_morton_tes",
+        "mix_2_poly_mpoly_tes",
+        "mix_2_poly_mpoly_tri",
+        "mix_2_line_poly_tes",
+        "mix_3_line_poly_mline_tes",
     ])("decodes %s like the reference", (name) => {
         const { tile, expected } = fixture(name);
         const tables = decodeTile(tile, undefined, false);
@@ -134,8 +148,6 @@ describe("decodeLayer02 - layer header", () => {
     });
 
     it("rejects what later steps decode, rather than reading past it", () => {
-        // a TessPolygons layout
-        expect(() => decodeTile(tile([...NAME, 0x30, 0x00, 0x0c, 0x00, 0x00, 0x00]))).toThrow(/not supported/);
         // one counted column of a type a later step decodes
         expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x01, 0x0c, 0x00]))).toThrow(/not supported/);
     });
@@ -221,6 +233,87 @@ describe("decodeLayer02 - topology", () => {
         expect(topologyVector.geometryOffsets).toBeUndefined();
         expect(Array.from(topologyVector.partOffsets)).toEqual([0, 2]);
         expect(topologyVector.ringOffsets.length).toBe(3);
+    });
+});
+
+describe("decodeLayer02 - tessellation", () => {
+    it("exposes the index buffer and triangle offsets a renderer uploads", () => {
+        const [table] = decodeTile(fixture("poly_hole_tes").tile);
+        const gpu = table.geometryVector as GpuVector;
+        expect(Array.from(gpu.triangleOffsets)).toEqual([0, 6]);
+        expect(gpu.indexBuffer.length).toBe(18);
+        expect(gpu.topologyVector.ringOffsets).toBeDefined();
+    });
+
+    it("reads a layer without outlines as multi-polygons of triangles", () => {
+        const [table] = decodeTile(fixture("mix_2_poly_mpoly_tri").tile);
+        const features = table.getFeatures();
+        expect(features.map((f) => f.geometry.type)).toEqual([GEOMETRY_TYPE.MULTIPOLYGON, GEOMETRY_TYPE.MULTIPOLYGON]);
+        expect(features[1].geometry.coordinates.length).toBe(7);
+        expect(features[1].geometry.coordinates[0].length).toBe(4);
+    });
+
+    it("rejects a triangle naming a vertex the layer does not have, and a non-polygon without outlines", () => {
+        // TessPolygons, one uniform Polygon, one triangle (symbol 0) over cycle [0, 1, 5] but only 3 vertices
+        const body = [
+            ...NAME,
+            0x30,
+            0x01,
+            0x0c,
+            0x08,
+            0x01,
+            0x01,
+            0x08,
+            0x01,
+            0x00,
+            0x88,
+            0x03,
+            0x03,
+            0,
+            1,
+            5,
+            0xa8,
+            0x03,
+            0x06,
+            0,
+            0,
+            2,
+            0,
+            0,
+            2,
+            0x00,
+        ];
+        expect(() => decodeTile(tile(body))).toThrow(/past the layer/);
+        // the same with a uniform LineString
+        const line = [
+            ...NAME,
+            0x20,
+            0x01,
+            0x0c,
+            0x08,
+            0x01,
+            0x01,
+            0x08,
+            0x01,
+            0x00,
+            0x88,
+            0x03,
+            0x03,
+            0,
+            1,
+            2,
+            0xa8,
+            0x03,
+            0x06,
+            0,
+            0,
+            2,
+            0,
+            0,
+            2,
+            0x00,
+        ];
+        expect(() => decodeTile(tile(line))).toThrow(/polygon/);
     });
 });
 

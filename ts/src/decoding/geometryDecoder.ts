@@ -261,6 +261,11 @@ export function decodeRootLengthStream(
         previousOffset = rootBufferOffsets[i + 1] =
             previousOffset + (geometryTypes[i] > bufferId ? rootLengthStream[rootLengthCounter++] : 1);
     }
+    if (rootLengthCounter > rootLengthStream.length) {
+        throw new Error(
+            `Geometry length stream holds ${rootLengthStream.length} values but the types need ${rootLengthCounter}`,
+        );
+    }
 
     return rootBufferOffsets;
 }
@@ -298,6 +303,11 @@ export function decodeLevel1LengthStream(
             }
         }
     }
+    if (level1LengthBufferCounter > level1LengthBuffer.length) {
+        throw new Error(
+            `Part length stream holds ${level1LengthBuffer.length} values but the types need ${level1LengthBufferCounter}`,
+        );
+    }
 
     return level1BufferOffsets;
 }
@@ -330,6 +340,11 @@ export function decodeLevel1WithoutRingBufferLengthStream(
                 level1BufferOffsets[level1OffsetBufferCounter++] = ++previousOffset;
             }
         }
+    }
+    if (level1LengthCounter > level1LengthBuffer.length) {
+        throw new Error(
+            `Part length stream holds ${level1LengthBuffer.length} values but the types need ${level1LengthCounter}`,
+        );
     }
 
     return level1BufferOffsets;
@@ -369,6 +384,11 @@ export function decodeLevel2LengthStream(
                 level1OffsetBufferCounter++;
             }
         }
+    }
+    if (level2LengthBufferCounter > level2LengthBuffer.length) {
+        throw new Error(
+            `Ring length stream holds ${level2LengthBuffer.length} values but the parts need ${level2LengthBufferCounter}`,
+        );
     }
 
     return level2BufferOffsets;

@@ -7,9 +7,7 @@
  * working fails both until it is removed. Remove entries as v2 support lands; add none.
  */
 export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
-    // geometry: tessellation, rANS
-    "0x02/*_tes*",
-    "0x02/*_tri",
+    // geometry: rANS vertices
     "0x02/*_rans",
     // v2-only data: m-values, nested properties, z coordinates
     "0x02/mvalues*",

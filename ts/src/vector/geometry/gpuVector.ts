@@ -1,3 +1,4 @@
+import Point from "@mapbox/point-geometry";
 import { createFlatGeometryVector } from "./flatGeometryVector";
 import type { CoordinatesArray } from "./geometryVector";
 import type { TopologyVector } from "./topologyVector";
@@ -34,13 +35,38 @@ export abstract class GpuVector implements Iterable<CoordinatesArray> {
 
     getGeometries(): CoordinatesArray[] {
         if (!this._topologyVector) {
-            throw new Error("Cannot convert GpuVector to coordinates without topology information");
+            return this.triangleGeometries();
         }
         const types = new Uint32Array(this.numGeometries);
         for (let i = 0; i < this.numGeometries; i++) {
             types[i] = this.geometryType(i);
         }
         return createFlatGeometryVector(types, this._topologyVector, undefined, this._vertexBuffer).getGeometries();
+    }
+
+    /**
+     * Without outlines, each feature is the multi-polygon of its triangles: one closed ring of three
+     * vertices per triangle, in decoded order, as the v2 spec reads a `TessPolygons` layer.
+     */
+    private triangleGeometries(): CoordinatesArray[] {
+        const geometries: CoordinatesArray[] = new Array(this.numGeometries);
+        const offsets = this._triangleOffsets;
+        const indices = this._indexBuffer;
+        const vertices = this._vertexBuffer;
+        for (let i = 0; i < this.numGeometries; i++) {
+            const rings: CoordinatesArray = [];
+            for (let t = offsets[i]; t < offsets[i + 1]; t++) {
+                const ring: Point[] = new Array(4);
+                for (let k = 0; k < 3; k++) {
+                    const vertex = indices[t * 3 + k] * 2;
+                    ring[k] = new Point(vertices[vertex], vertices[vertex + 1]);
+                }
+                ring[3] = ring[0];
+                rings.push(ring);
+            }
+            geometries[i] = rings;
+        }
+        return geometries;
     }
 
     [Symbol.iterator](): Iterator<CoordinatesArray> {

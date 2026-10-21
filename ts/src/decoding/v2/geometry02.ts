@@ -13,6 +13,10 @@ import type { GeometryVector } from "../../vector/geometry/geometryVector";
 import type { TopologyVector } from "../../vector/geometry/topologyVector";
 import { createConstGeometryVector } from "../../vector/geometry/constGeometryVector";
 import { createFlatGeometryVector } from "../../vector/geometry/flatGeometryVector";
+import { createConstGpuVector } from "../../vector/geometry/constGpuVector";
+import { createFlatGpuVector } from "../../vector/geometry/flatGpuVector";
+import type { GpuVector } from "../../vector/geometry/gpuVector";
+import { decodeTriangleTrees } from "../triangleTrees";
 import { decodeZOrderCurve } from "../../vector/geometry/zOrderCurve";
 import { decodeIntStream02, readWords32 } from "./intStream02";
 import { type MortonParams02, readStreamHeader02, type StreamHeader02 } from "./streamHeader02";
@@ -93,10 +97,7 @@ export function decodeGeometry02(
     layout: GeoLayout02,
     featureCount: number,
     scaling: GeometryScaling | undefined,
-): GeometryVector {
-    if (isTess(layout)) {
-        throw new Error(`v2 geometry layout ${GeoLayout02[layout]} is not supported by this decoder yet`);
-    }
+): GeometryVector | GpuVector {
     const uniform = header.uniformType;
     const types = uniform === undefined ? readTypes(tile, offset, featureCount) : undefined;
     checkTypesFitLayout(types ?? new Uint32Array(featureCount).fill(uniform), layout);
@@ -107,6 +108,11 @@ export function decodeGeometry02(
     // The offset conversions branch on each feature's type, so a uniform layer spells its type out.
     const typeOfEach = types ?? new Uint32Array(featureCount).fill(uniform);
     const topology = decodeTopology(typeOfEach, geoLengths, partLengths, ringLengths);
+
+    let tessellation: Tessellation02 | undefined;
+    if (isTess(layout)) {
+        tessellation = readTessellation(tile, offset, featureCount);
+    }
 
     const dictionary = isDict(layout);
     const vertexHeader = readStreamHeader02(tile, offset, "vertex", featureCount);
@@ -131,15 +137,79 @@ export function decodeGeometry02(
                 throw new Error(`Vertex offset ${vertexOffsets[i]} is past the ${distinct} dictionary entries`);
             }
         }
-    } else if (vertexHeader.numValues !== vertexCount) {
+    } else if (layout !== GeoLayout02.TessPolygons && vertexHeader.numValues !== vertexCount) {
+        // Without outlines no topology spans the vertices; the triangles are their only reader.
         throw new Error(
             `The topology spans ${vertexCount} vertices but the vertex stream holds ${vertexHeader.numValues}`,
         );
     }
 
+    if (tessellation !== undefined) {
+        return tessellatedVector(layout, typeOfEach, uniform, tessellation, vertices, topology, vertexHeader.numValues);
+    }
     return types === undefined
         ? createConstGeometryVector(featureCount, uniform, topology, vertexOffsets, vertices)
         : createFlatGeometryVector(types, topology, vertexOffsets, vertices);
+}
+
+/** The triangle streams of a tessellated layout, decoded to an index buffer. */
+interface Tessellation02 {
+    /** Cumulative triangle counts, one more than there are counts. */
+    triangleOffsets: Uint32Array;
+    /** Three vertex indices per triangle, counted from the layer's first vertex. */
+    indexBuffer: Uint32Array;
+}
+
+function readTessellation(tile: Uint8Array, offset: IntWrapper, featureCount: number): Tessellation02 {
+    const triangleLengths = readLengths(tile, offset, featureCount);
+    const symbols = readLengths(tile, offset, featureCount);
+    const cycles = readLengths(tile, offset, featureCount);
+    const indexBuffer = decodeTriangleTrees(symbols, cycles);
+    const triangleOffsets = new Uint32Array(triangleLengths.length + 1);
+    let total = 0;
+    for (let i = 0; i < triangleLengths.length; i++) {
+        total += triangleLengths[i];
+        triangleOffsets[i + 1] = total;
+    }
+    if (total !== symbols.length) {
+        throw new Error(`Triangle lengths sum to ${total} but there are ${symbols.length} triangles`);
+    }
+    return { triangleOffsets, indexBuffer };
+}
+
+/**
+ * A tessellated layer as a GPU vector. With outlines it keeps its topology and decodes as the
+ * geometry it was encoded from; without, every feature is a multi-polygon of its triangles.
+ */
+function tessellatedVector(
+    layout: GeoLayout02,
+    types: Uint32Array,
+    uniform: GEOMETRY_TYPE | undefined,
+    tessellation: Tessellation02,
+    vertices: Int32Array,
+    topology: TopologyVector,
+    vertexCount: number,
+): GeometryVector | GpuVector {
+    const { triangleOffsets, indexBuffer } = tessellation;
+    for (let i = 0; i < indexBuffer.length; i++) {
+        if (indexBuffer[i] >= vertexCount) {
+            throw new Error(`Triangle vertex ${indexBuffer[i]} is past the layer's ${vertexCount} vertices`);
+        }
+    }
+    const polygons = types.filter((t) => t === GEOMETRY_TYPE.POLYGON || t === GEOMETRY_TYPE.MULTIPOLYGON).length;
+    if (triangleOffsets.length - 1 !== polygons) {
+        throw new Error(`${triangleOffsets.length - 1} triangle counts for ${polygons} polygon features`);
+    }
+    if (layout === GeoLayout02.TessPolygonsWithOutlines) {
+        return uniform === undefined
+            ? createFlatGpuVector(types, triangleOffsets, indexBuffer, vertices, topology)
+            : createConstGpuVector(types.length, uniform, triangleOffsets, indexBuffer, vertices, topology);
+    }
+    if (polygons !== types.length) {
+        throw new Error("A TessPolygons layer holds only polygons");
+    }
+    // Shells and holes are not stored, so every feature reads back as a multi-polygon.
+    return createConstGpuVector(types.length, GEOMETRY_TYPE.MULTIPOLYGON, triangleOffsets, indexBuffer, vertices);
 }
 
 /** The types stream: one geometry type code per feature. */
@@ -164,6 +234,10 @@ function readLengths(tile: Uint8Array, offset: IntWrapper, featureCount: number)
 
 /** Every type needs the length streams its nesting takes, which the layout has to declare. */
 function checkTypesFitLayout(types: Uint32Array, layout: GeoLayout02): void {
+    if (layout === GeoLayout02.TessPolygons) {
+        // No topology at all: the triangles alone read the vertices, which only polygons can be.
+        return;
+    }
     const geo = hasGeoLengths(layout);
     const parts = hasPartLengths(layout);
     const rings = hasRingLengths(layout);
