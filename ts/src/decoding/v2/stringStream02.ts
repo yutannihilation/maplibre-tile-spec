@@ -5,9 +5,14 @@ import { unpackNullable } from "../unpackNullableUtils";
 import { StringDictionaryVector } from "../../vector/dictionary/stringDictionaryVector";
 import type BitVector from "../../vector/flat/bitVector";
 import { StringFlatVector } from "../../vector/flat/stringFlatVector";
-import { StringFsstDictionaryVector } from "../../vector/fsst-dictionary/stringFsstDictionaryVector";
+import {
+    type FsstDictionaryCache,
+    StringFsstDictionaryVector,
+} from "../../vector/fsst-dictionary/stringFsstDictionaryVector";
 import type Vector from "../../vector/vector";
+import { readString02, readU8, readVarint32 } from "./bytes02";
 import { decodeIntStream02 } from "./intStream02";
+import { parsePresenceNibble02, presentCount, readPresence02 } from "./presence02";
 import { readStreamHeader02, type StreamHeader02 } from "./streamHeader02";
 
 /**
@@ -117,8 +122,92 @@ export function readDictionary(tile: Uint8Array, offset: IntWrapper, lengths: Ui
     return { offsets, bytes: blob };
 }
 
+/**
+ * A shared dictionary column (`docs/specification/v2.md#shared-dictionary-columns`): the type
+ * byte's high nibble names the dictionary kind, then come the group's prefix, the child count,
+ * the corpus streams with their own counts, and one string child per count that indexes into
+ * the dictionary. Returns one vector per child, named by the prefix and the child's name.
+ */
+export function decodeSharedDict02(
+    tile: Uint8Array,
+    offset: IntWrapper,
+    typeByte: number,
+    featureCount: number,
+    sharedPresence: BitVector[],
+): Vector[] {
+    const kind = typeByte >> 4;
+    if (kind > 1) {
+        throw new Error(`Shared dictionary kind ${kind} is reserved`);
+    }
+    const prefix = readString02(tile, offset, "Shared dictionary name");
+    const childCount = readVarint32(tile, offset, "Shared dictionary child count");
+
+    // Nothing implies the dictionary's entry count, so each corpus stream carries its own.
+    const lengths = readLengths(tile, offset, undefined);
+    let dictionary: StringDictionary02 | undefined;
+    let fsst: { corpus: Uint8Array; symbolOffsets: Uint32Array; symbols: Uint8Array } | undefined;
+    if (kind === 0) {
+        dictionary = readDictionary(tile, offset, lengths);
+    } else {
+        const symbolLengths = readLengths(tile, offset, undefined);
+        const symbols = readBlob(tile, offset, false);
+        const corpusHeader = readStreamHeader02(tile, offset, "bytes");
+        const corpus = takeBlob(tile, offset, corpusHeader);
+        checkSymbols(symbolLengths, symbols);
+        if (corpusHeader.logical === "frontCoded") {
+            dictionary = decodeFrontCoded(lengths, decodeCorpus(symbolLengths, symbols, corpus));
+        } else {
+            fsst = { corpus, symbolOffsets: offsetsOf(symbolLengths), symbols };
+        }
+    }
+    const entries = dictionary === undefined ? lengths.length : dictionary.offsets.length - 1;
+    const cache: FsstDictionaryCache = {};
+
+    const children: Vector[] = [];
+    for (let i = 0; i < childCount; i++) {
+        const childByte = readU8(tile, offset, `Shared dictionary child ${i} type byte`);
+        if ((childByte & 0x0f) !== 0xb) {
+            throw new Error(`Shared dictionary child ${i} is not a string column`);
+        }
+        const name = prefix + readString02(tile, offset, `Shared dictionary child ${i} name`);
+        const nibble = parsePresenceNibble02(childByte >> 4, sharedPresence.length);
+        let presence: BitVector | undefined;
+        if (nibble.kind === "inline") {
+            presence = readPresence02(tile, offset, featureCount, nibble.coding);
+        } else if (nibble.kind === "shared") {
+            presence = sharedPresence[nibble.index];
+        }
+        const dataCount = presence === undefined ? featureCount : presentCount(presence);
+        const leading = readStreamHeader02(tile, offset, "str", dataCount);
+        if (leading.strLayout !== "dict") {
+            throw new Error(`Shared dictionary child "${name}" does not hold dictionary codes`);
+        }
+        const codes = decodeIntStream02(tile, offset, leading, false) as Uint32Array;
+        if (codes.length !== dataCount) {
+            throw new Error(`Column "${name}" holds ${codes.length} values for ${dataCount} present features`);
+        }
+        checkCodes(name, codes, entries);
+        const perFeature = unpackNullable(codes, presence ?? null, 0);
+        children.push(
+            dictionary !== undefined
+                ? new StringDictionaryVector(name, perFeature, dictionary.offsets, dictionary.bytes, presence)
+                : new StringFsstDictionaryVector(
+                      name,
+                      perFeature,
+                      offsetsOf(lengths),
+                      fsst.corpus,
+                      fsst.symbolOffsets,
+                      fsst.symbols,
+                      presence,
+                      cache,
+                  ),
+        );
+    }
+    return children;
+}
+
 /** An integer stream of a string column after the leading one: unsigned, `implied` values unless it says otherwise. */
-export function readLengths(tile: Uint8Array, offset: IntWrapper, implied: number): Uint32Array {
+export function readLengths(tile: Uint8Array, offset: IntWrapper, implied: number | undefined): Uint32Array {
     const header = readStreamHeader02(tile, offset, "int32", implied);
     return decodeIntStream02(tile, offset, header, false) as Uint32Array;
 }

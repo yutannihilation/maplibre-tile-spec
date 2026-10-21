@@ -206,6 +206,45 @@ describe("decodeColumns02 - string fixtures", () => {
     });
 });
 
+describe("decodeColumns02 - shared dictionary fixtures", () => {
+    it.each([
+        "props_shared_dict_bp",
+        "props_shared_dict_sp",
+        "props_shared_dict_sp_lonely",
+        "props_shared_dict_sp_mixed",
+    ])("decodes %s like the reference", (name) => {
+        const { tile, expected } = fixture(name);
+        expect(featureTablesToFeatureCollection(decodeTile(tile, undefined, false))).toEqual(expected);
+    });
+
+    it("names each child by the group's prefix and keeps one dictionary for all of them", () => {
+        const [table] = decodeTile(fixture("props_shared_dict_bp").tile);
+        expect(table.propertyVectors.map((v) => v.name)).toEqual(["name:de", "name:en"]);
+        expect(table.getPropertyVector("name:en").getValue(0)).toBe("AAAAAAAAAAAAAAAAAAAAAAAAAAAA_zone_1");
+    });
+
+    it("rejects a reserved kind, a child that is not a string, and codes without the dictionary layout", () => {
+        const dict = [0x88, 0x01, 0x01, 0x02, 0x04, 0x02, 0x68, 0x69];
+        expect(() => decodeTile(pointLayer(1, 1, [0x2f, 0x02, 0x6e, 0x3a, 0x00, ...dict]))).toThrow(/reserved/);
+        const child = [0x05, 0x02, 0x64, 0x65, 0x09, 0x01, 0x00];
+        expect(() => decodeTile(pointLayer(1, 1, [0x0f, 0x02, 0x6e, 0x3a, 0x01, ...dict, ...child]))).toThrow(
+            /not a string/,
+        );
+        const plainChild = [0x0b, 0x02, 0x64, 0x65, 0x08, 0x01, 0x00];
+        expect(() => decodeTile(pointLayer(1, 1, [0x0f, 0x02, 0x6e, 0x3a, 0x01, ...dict, ...plainChild]))).toThrow(
+            /dictionary codes/,
+        );
+    });
+
+    it("rejects a child name that another column already holds", () => {
+        const dict = [0x88, 0x01, 0x01, 0x02, 0x04, 0x02, 0x68, 0x69];
+        const child = [0x0b, 0x02, 0x64, 0x65, 0x09, 0x01, 0x00];
+        const before = [0x05, 0x04, 0x6e, 0x3a, 0x64, 0x65, 0x08, 0x01, 0x02];
+        const columns = [...before, 0x0f, 0x02, 0x6e, 0x3a, 0x01, ...dict, ...child];
+        expect(() => decodeTile(pointLayer(1, 2, columns))).toThrow(/repeated/);
+    });
+});
+
 describe("decodeColumns02 - column headers", () => {
     it("rejects a second id column", () => {
         // two Id columns, each one raw word with the byte length omitted
@@ -229,6 +268,6 @@ describe("decodeColumns02 - column headers", () => {
 
     it("rejects what later steps decode, rather than reading past it", () => {
         expect(() => decodeTile(pointLayer(1, 1, [0x0c, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
-        expect(() => decodeTile(pointLayer(1, 1, [0x0f, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
+        expect(() => decodeTile(pointLayer(1, 1, [0x0d, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
     });
 });

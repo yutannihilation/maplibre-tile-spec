@@ -14,8 +14,6 @@ export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
     "0x02/*_rans",
     // ALP offsets over FastPFOR
     "0x02/prop_f64_alp_offset_np",
-    // shared dictionary columns
-    "0x02/props_shared_dict*",
     // v2-only data: m-values, nested properties, z coordinates
     "0x02/mvalues*",
     "0x02/nested_*",

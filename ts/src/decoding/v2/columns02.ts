@@ -14,7 +14,7 @@ import { decodeIntStream02 } from "./intStream02";
 import type { DecodeOptions02 } from "./layerDecoder02";
 import { parsePresenceNibble02, presentCount, readBoolStream02, readPresence02 } from "./presence02";
 import { readStreamHeader02 } from "./streamHeader02";
-import { decodeStringColumn02 } from "./stringStream02";
+import { decodeSharedDict02, decodeStringColumn02 } from "./stringStream02";
 
 /**
  * The counted columns of a v2 layer (`docs/specification/v2.md#columns`): each a type byte, a name
@@ -75,7 +75,14 @@ export function decodeColumns02(
         const typeByte = readU8(tile, offset, `Column ${i} type byte`);
         const dataType = typeByte & 0x0f;
         if (dataType === DataType02.SharedDict) {
-            throw new Error("v2 shared dictionary columns are not supported by this decoder yet");
+            for (const child of decodeSharedDict02(tile, offset, typeByte, ctx.featureCount, ctx.sharedPresence)) {
+                if (names.has(child.name)) {
+                    throw new Error(`Column name "${child.name}" is repeated`);
+                }
+                names.add(child.name);
+                propertyVectors.push(child);
+            }
+            continue;
         }
         const header = readColumnHeader(tile, offset, typeByte, dataType, ctx);
         switch (dataType) {
