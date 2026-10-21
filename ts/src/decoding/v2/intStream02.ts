@@ -2,6 +2,7 @@ import type IntWrapper from "../intWrapper";
 import { decodeUint32sLE, decodeUint64sLE } from "../decodingUtils";
 import { decodeZigZagInt32Value, decodeZigZagInt64Value } from "../integerDecodingUtils";
 import { decodeZigZagDelta2Int32, decodeZigZagDelta2Int64 } from "../delta2";
+import { unpackBits32, unpackBits64 } from "../bitPacking";
 import type { StreamHeader02 } from "./streamHeader02";
 
 /**
@@ -108,6 +109,18 @@ export function decodeIntStream02(
                 return signed ? zigZag64(words) : words;
             }
             const words = expandRle32(readRlePairs32(tile, offset, header), numValues);
+            return signed ? zigZag32(words) : words;
+        }
+        case "bitPacked": {
+            // The packed words are the values: bit packing stands in for the whole physical step.
+            const end = payloadEnd(tile, offset, header);
+            const payload = tile.subarray(offset.get(), end);
+            offset.set(end);
+            if (wide) {
+                const words = unpackBits64(payload, numValues);
+                return signed ? zigZag64(words) : words;
+            }
+            const words = unpackBits32(payload, numValues);
             return signed ? zigZag32(words) : words;
         }
         case "deltaRle": {

@@ -121,8 +121,7 @@ describe("decodeIntStream02 - delta RLE", () => {
 });
 
 describe("decodeIntStream02 - encodings of later steps", () => {
-    it("rejects bit packing and FastPFOR until they are implemented", () => {
-        expect(() => decode([0x40, 0x02, 1, 0], "int32", 1, false)).toThrow(/not supported/);
+    it("rejects FastPFOR until it is implemented", () => {
         expect(() => decode([0x0c, 0x04, 0, 0, 0, 0], "int32", 1, false)).toThrow(/not supported/);
     });
 });
