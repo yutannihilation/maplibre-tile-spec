@@ -52,6 +52,14 @@ describe("decodeLayer02 - fixtures", () => {
         "mix_2_line_polyh",
         "mix_3_mpt_poly_mpt",
         "mix_7_pt_line_poly_polyh_mpt_mline_mpoly",
+        "point_morton_dictionary",
+        "multipoint_morton_dictionary",
+        "line_morton_curve_morton",
+        "multiline_morton",
+        "poly_morton_ring_morton",
+        "poly_morton_hole_morton",
+        "poly_multi_morton_ring_morton",
+        "poly_multi_morton_hole_morton",
     ])("decodes %s like the reference", (name) => {
         const { tile, expected } = fixture(name);
         const tables = decodeTile(tile, undefined, false);
@@ -122,8 +130,8 @@ describe("decodeLayer02 - layer header", () => {
     });
 
     it("rejects what later steps decode, rather than reading past it", () => {
-        // a PointsDict layout
-        expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00]))).toThrow(/not supported/);
+        // a TessPolygons layout
+        expect(() => decodeTile(tile([...NAME, 0x30, 0x00, 0x0c, 0x00, 0x00, 0x00]))).toThrow(/not supported/);
         // one counted column
         expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x01, 0x05]))).toThrow(/not supported/);
     });
@@ -158,6 +166,37 @@ describe("decodeLayer02 - vertex encodings", () => {
         const [table] = decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x00]));
         expect(table.numFeatures).toBe(0);
         expect(table.getFeatures()).toEqual([]);
+    });
+});
+
+describe("decodeLayer02 - vertex dictionary", () => {
+    // uniform Point, three features, PointsDict: two distinct raw vertices (1, 2) and (5, 6), then offsets
+    const DICT = [0x80, 0x02, ...le32(2, 4, 10, 12)];
+
+    it("looks each vertex up through its offset", () => {
+        const body = [...NAME, 0x10, 0x03, 0x01, ...DICT, 0x00, ...le32(1, 0, 1), 0x00];
+        const coords = decodeTile(tile(body))[0]
+            .getFeatures()
+            .map((f) => f.geometry.coordinates[0][0]);
+        expect(coords).toMatchObject([
+            { x: 5, y: 6 },
+            { x: 1, y: 2 },
+            { x: 5, y: 6 },
+        ]);
+    });
+
+    it("rejects an offset past the dictionary, and an offset count the topology disagrees with", () => {
+        expect(() => decodeTile(tile([...NAME, 0x10, 0x03, 0x01, ...DICT, 0x00, ...le32(1, 2, 1), 0x00]))).toThrow(
+            /dictionary/,
+        );
+        expect(() => decodeTile(tile([...NAME, 0x10, 0x03, 0x01, ...DICT, 0x80, 0x02, ...le32(1, 0), 0x00]))).toThrow(
+            /vertex offsets/,
+        );
+    });
+
+    it("rejects Morton codes outside a dictionary layout", () => {
+        const body = [...NAME, 0x10, 0x01, 0x00, 0x38, 0x01, 0x05, 0x00, 0x03, 0x00];
+        expect(() => decodeTile(tile(body))).toThrow(/dictionary/);
     });
 });
 

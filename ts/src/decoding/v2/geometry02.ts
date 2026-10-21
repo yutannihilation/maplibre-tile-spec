@@ -13,8 +13,9 @@ import type { GeometryVector } from "../../vector/geometry/geometryVector";
 import type { TopologyVector } from "../../vector/geometry/topologyVector";
 import { createConstGeometryVector } from "../../vector/geometry/constGeometryVector";
 import { createFlatGeometryVector } from "../../vector/geometry/flatGeometryVector";
+import { decodeZOrderCurve } from "../../vector/geometry/zOrderCurve";
 import { decodeIntStream02, readWords32 } from "./intStream02";
-import { readStreamHeader02, type StreamHeader02 } from "./streamHeader02";
+import { type MortonParams02, readStreamHeader02, type StreamHeader02 } from "./streamHeader02";
 import type { LayerHeader02 } from "./layerDecoder02";
 
 /**
@@ -93,7 +94,7 @@ export function decodeGeometry02(
     featureCount: number,
     scaling: GeometryScaling | undefined,
 ): GeometryVector {
-    if (isDict(layout) || isTess(layout)) {
+    if (isTess(layout)) {
         throw new Error(`v2 geometry layout ${GeoLayout02[layout]} is not supported by this decoder yet`);
     }
     const uniform = header.uniformType;
@@ -107,18 +108,38 @@ export function decodeGeometry02(
     const typeOfEach = types ?? new Uint32Array(featureCount).fill(uniform);
     const topology = decodeTopology(typeOfEach, geoLengths, partLengths, ringLengths);
 
+    const dictionary = isDict(layout);
     const vertexHeader = readStreamHeader02(tile, offset, "vertex", featureCount);
+    if (vertexHeader.logical === "morton" && !dictionary) {
+        throw new Error("Morton codes are only stored as a vertex dictionary");
+    }
     const vertices = decodeVertices02(tile, offset, vertexHeader, scaling);
     const vertexCount = countVertices(topology, featureCount);
-    if (vertexHeader.numValues !== vertexCount) {
+
+    // A dictionary layout stores the distinct vertices, then one index per vertex into them.
+    let vertexOffsets: Uint32Array | undefined;
+    if (dictionary) {
+        vertexOffsets = readLengths(tile, offset, featureCount);
+        if (vertexOffsets.length !== vertexCount) {
+            throw new Error(
+                `The topology spans ${vertexCount} vertices but there are ${vertexOffsets.length} vertex offsets`,
+            );
+        }
+        const distinct = vertexHeader.numValues;
+        for (let i = 0; i < vertexOffsets.length; i++) {
+            if (vertexOffsets[i] >= distinct) {
+                throw new Error(`Vertex offset ${vertexOffsets[i]} is past the ${distinct} dictionary entries`);
+            }
+        }
+    } else if (vertexHeader.numValues !== vertexCount) {
         throw new Error(
             `The topology spans ${vertexCount} vertices but the vertex stream holds ${vertexHeader.numValues}`,
         );
     }
 
     return types === undefined
-        ? createConstGeometryVector(featureCount, uniform, topology, undefined, vertices)
-        : createFlatGeometryVector(types, topology, undefined, vertices);
+        ? createConstGeometryVector(featureCount, uniform, topology, vertexOffsets, vertices)
+        : createFlatGeometryVector(types, topology, vertexOffsets, vertices);
 }
 
 /** The types stream: one geometry type code per feature. */
@@ -197,6 +218,22 @@ function decodeTopology(
     return {};
 }
 
+/**
+ * Morton codes of a sorted dictionary, stored as plain deltas (`docs/encodings.md#morton`), decoded
+ * to `(x, y)` pairs on the grid the stream's parameters name.
+ */
+function decodeMortonDeltas(words: Uint32Array, morton: MortonParams02): Int32Array {
+    const vertices = new Int32Array(words.length * 2);
+    let code = 0;
+    for (let i = 0; i < words.length; i++) {
+        code = (code + words[i]) >>> 0;
+        const { x, y } = decodeZOrderCurve(code, morton.bits, morton.shift);
+        vertices[2 * i] = x;
+        vertices[2 * i + 1] = y;
+    }
+    return vertices;
+}
+
 /** The vertices the deepest offset level spans, or one per feature without any level. */
 function countVertices(topology: TopologyVector, featureCount: number): number {
     const deepest = topology.ringOffsets ?? topology.partOffsets ?? topology.geometryOffsets;
@@ -205,7 +242,8 @@ function countVertices(topology: TopologyVector, featureCount: number): number {
 
 /**
  * The vertex stream as `(x, y)` pairs. Delta runs one sum over every word, the componentwise
- * encodings keep a predecessor per component; all zigzag-decode and wrap at 32 bits.
+ * encodings keep a predecessor per component; all zigzag-decode and wrap at 32 bits. Morton codes
+ * decode to pairs here too, so one vertex buffer shape serves every encoding.
  */
 function decodeVertices02(
     tile: Uint8Array,
@@ -242,6 +280,9 @@ function decodeVertices02(
             break;
         case "cwDelta2":
             vertices = decodeComponentwiseDelta2Vec2(readWords32(tile, offset, header, numWords));
+            break;
+        case "morton":
+            vertices = decodeMortonDeltas(readWords32(tile, offset, header, header.numValues), header.morton);
             break;
         default:
             throw new Error(`v2 ${header.logical} vertices are not supported by this decoder yet`);

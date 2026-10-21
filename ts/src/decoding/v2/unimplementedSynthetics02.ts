@@ -7,12 +7,7 @@
  * working fails both until it is removed. Remove entries as v2 support lands; add none.
  */
 export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
-    // geometry: vertex dictionary and Morton, FastPFOR, tessellation, rANS
-    "0x02/*_dictionary",
-    "0x02/*_curve_morton",
-    "0x02/*_ring_morton",
-    "0x02/*_hole_morton",
-    "0x02/multiline_morton",
+    // geometry: FastPFOR, tessellation, rANS
     "0x02/*_fpf*",
     "0x02/*_tes*",
     "0x02/*_tri",
