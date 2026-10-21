@@ -177,6 +177,35 @@ describe("decodeColumns02 - float fixtures", () => {
     });
 });
 
+describe("decodeColumns02 - string fixtures", () => {
+    it.each([
+        "prop_str_ascii",
+        "prop_str_empty_val",
+        "prop_str_escape_np",
+        "prop_str_null_val",
+        "prop_str_unicode",
+        "prop_str_val_empty",
+        "props_str_plain",
+        "props_str_plain_nulls",
+        "props_str_dict",
+        "props_str_dict_bp_np",
+        "props_str_dict_nulls",
+        "props_str_front_dict",
+        "props_str_front_dict_nulls",
+        "props_str_fsst",
+        "props_str_fsst_nulls",
+        "props_str_fsst_dict_np",
+        "props_str_fsst_dict_nulls",
+        "props_str_fsst_front_dict",
+        "props_str_fsst_front_dict_nulls",
+        "props_mixed",
+        "props_mixed_np",
+    ])("decodes %s like the reference", (name) => {
+        const { tile, expected } = fixture(name);
+        expect(featureTablesToFeatureCollection(decodeTile(tile, undefined, false))).toEqual(expected);
+    });
+});
+
 describe("decodeColumns02 - column headers", () => {
     it("rejects a second id column", () => {
         // two Id columns, each one raw word with the byte length omitted
@@ -199,7 +228,7 @@ describe("decodeColumns02 - column headers", () => {
     });
 
     it("rejects what later steps decode, rather than reading past it", () => {
-        expect(() => decodeTile(pointLayer(1, 1, [0x0b, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
+        expect(() => decodeTile(pointLayer(1, 1, [0x0c, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
         expect(() => decodeTile(pointLayer(1, 1, [0x0f, 0x01, 0x61, 0x00]))).toThrow(/not supported/);
     });
 });

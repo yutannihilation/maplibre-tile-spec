@@ -14,6 +14,7 @@ import { decodeIntStream02 } from "./intStream02";
 import type { DecodeOptions02 } from "./layerDecoder02";
 import { parsePresenceNibble02, presentCount, readBoolStream02, readPresence02 } from "./presence02";
 import { readStreamHeader02 } from "./streamHeader02";
+import { decodeStringColumn02 } from "./stringStream02";
 
 /**
  * The counted columns of a v2 layer (`docs/specification/v2.md#columns`): each a type byte, a name
@@ -99,6 +100,18 @@ export function decodeColumns02(
             case DataType02.Float:
             case DataType02.Double:
                 propertyVectors.push(decodeFloatColumn(tile, offset, header, ctx));
+                break;
+            case DataType02.String:
+                propertyVectors.push(
+                    decodeStringColumn02(
+                        tile,
+                        offset,
+                        header.name,
+                        header.dataCount,
+                        header.presence,
+                        ctx.featureCount,
+                    ),
+                );
                 break;
             default:
                 throw new Error(`v2 ${DataType02[dataType]} columns are not supported by this decoder yet`);
