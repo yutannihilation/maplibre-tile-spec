@@ -3,6 +3,7 @@ import type GeometryScaling from "../geometryScaling";
 import FeatureTable from "../../vector/featureTable";
 import type { GEOMETRY_TYPE } from "../../vector/geometry/geometryType";
 import { readString02, readU8, readVarint32, readVarint64 } from "./bytes02";
+import { decodeColumns02 } from "./columns02";
 import { allowsMValues, decodeGeometry02, type GeoLayout02, parseGeoLayout02 } from "./geometry02";
 import { readSharedPresence02 } from "./presence02";
 
@@ -112,10 +113,11 @@ export function decodeLayer02(
     const geometry = decodeGeometry02(tile, offset, header, layout.geometry, featureCount, scaling);
 
     const counts = readColumnCounts02(tile, offset, header.mValues);
-    if (counts.columns > 0) {
-        throw new Error("v2 columns are not supported by this decoder yet");
-    }
-    void sharedPresence;
+    const { idVector, propertyVectors } = decodeColumns02(tile, offset, counts.columns, {
+        featureCount,
+        sharedPresence,
+        options,
+    });
     if (header.mValues) {
         throw new Error("v2 m-values are not supported by this decoder yet");
     }
@@ -123,5 +125,5 @@ export function decodeLayer02(
     if (offset.get() !== blockEnd) {
         throw new Error(`Trailing bytes in a v2 layer: body ends at ${offset.get()}, block at ${blockEnd}`);
     }
-    return new FeatureTable(name, geometry, undefined, [], header.extent);
+    return new FeatureTable(name, geometry, idVector, propertyVectors, header.extent);
 }

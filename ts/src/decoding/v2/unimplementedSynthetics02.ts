@@ -12,8 +12,6 @@ export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
     "0x02/*_tes*",
     "0x02/*_tri",
     "0x02/*_rans",
-    // id columns
-    "0x02/id*",
     // property columns and presence
     "0x02/prop_*",
     "0x02/props_*",
