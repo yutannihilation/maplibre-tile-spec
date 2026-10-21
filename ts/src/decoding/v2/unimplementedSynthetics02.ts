@@ -7,13 +7,10 @@
  * working fails both until it is removed. Remove entries as v2 support lands; add none.
  */
 export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
-    // geometry: FastPFOR, tessellation, rANS
-    "0x02/*_fpf*",
+    // geometry: tessellation, rANS
     "0x02/*_tes*",
     "0x02/*_tri",
     "0x02/*_rans",
-    // ALP offsets over FastPFOR
-    "0x02/prop_f64_alp_offset_np",
     // v2-only data: m-values, nested properties, z coordinates
     "0x02/mvalues*",
     "0x02/nested_*",

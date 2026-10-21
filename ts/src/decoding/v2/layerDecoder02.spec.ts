@@ -60,6 +60,10 @@ describe("decodeLayer02 - fixtures", () => {
         "poly_morton_hole_morton",
         "poly_multi_morton_ring_morton",
         "poly_multi_morton_hole_morton",
+        "poly_fpf",
+        "poly_hole_fpf",
+        "poly_collinear_fpf",
+        "poly_self_intersect_fpf",
     ])("decodes %s like the reference", (name) => {
         const { tile, expected } = fixture(name);
         const tables = decodeTile(tile, undefined, false);

@@ -120,9 +120,17 @@ describe("decodeIntStream02 - delta RLE", () => {
     });
 });
 
-describe("decodeIntStream02 - encodings of later steps", () => {
-    it("rejects FastPFOR until it is implemented", () => {
-        expect(() => decode([0x0c, 0x04, 0, 0, 0, 0], "int32", 1, false)).toThrow(/not supported/);
+describe("decodeIntStream02 - FastPFOR", () => {
+    it("decodes 32-bit words through the 128-value variant", () => {
+        const tail = [0, 0, 0, 0, 129, 44, 130, 112, 34, 132, 127, 127, 127, 127, 143, 135];
+        expect(decode([0x0c, 0x10, ...tail], "int32", 5, false).values).toEqual([1, 300, 70000, 0xffffffff, 7]);
+        expect(decode([0x1c, 0x10, ...tail], "int32", 5, true).values).toEqual([
+            -1, 149, 35149, -2147448499, -2147448503,
+        ]);
+    });
+
+    it("rejects FastPFOR on 64-bit words, which the reference has no form for", () => {
+        expect(() => decode([0x0c, 0x04, 0, 0, 0, 0], "int64", 1, false)).toThrow(/64-bit/);
     });
 });
 

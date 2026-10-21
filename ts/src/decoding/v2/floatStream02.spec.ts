@@ -54,8 +54,10 @@ describe("decodeFloatStream02 - ALP", () => {
         expect(decode(bytes, "float64", 1).values).toEqual([9007199254740991]);
     });
 
-    it("rejects FastPFOR offsets until that step lands", () => {
-        expect(() => decode([0x2c, 0x01, 0x00, 0x00, 0x00], "float64", 1)).toThrow(/not supported/);
+    it("reads offsets over FastPFOR as 32-bit words", () => {
+        // ALP over FastPFOR (0x2c), 16 payload bytes: the tail-only words [1, 300, 70000, 0xffffffff, 7] with e 0, base 0
+        const tail = [0, 0, 0, 0, 129, 44, 130, 112, 34, 132, 127, 127, 127, 127, 143, 135];
+        expect(decode([0x2c, 0x10, 0x00, 0x00, ...tail], "float64", 5).values).toEqual([1, 300, 70000, 4294967295, 7]);
     });
 });
 

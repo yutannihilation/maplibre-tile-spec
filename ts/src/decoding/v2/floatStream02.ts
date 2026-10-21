@@ -20,11 +20,11 @@ export function decodeFloatStream02(tile: Uint8Array, offset: IntWrapper, header
         case "none":
             return readRawFloats(tile, offset, header, wide);
         case "alp": {
-            if (header.physical === "fastPfor") {
-                throw new Error("v2 ALP over FastPFOR is not supported by this decoder yet");
-            }
-            // ALP offsets are 64-bit words whatever the column's width.
-            const offsets = readWords64(tile, offset, header, header.numValues);
+            // ALP offsets are 64-bit words, except over FastPFOR, which the reference decodes as 32-bit words.
+            const offsets =
+                header.physical === "fastPfor"
+                    ? BigUint64Array.from(readWords32(tile, offset, header, header.numValues), BigInt)
+                    : readWords64(tile, offset, header, header.numValues);
             return wide ? decodeAlpDoubles(offsets, header.alp) : decodeAlpFloats(offsets, header.alp);
         }
         case "dict": {

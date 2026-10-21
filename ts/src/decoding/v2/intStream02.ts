@@ -3,6 +3,7 @@ import { decodeUint32sLE, decodeUint64sLE } from "../decodingUtils";
 import { decodeZigZagInt32Value, decodeZigZagInt64Value } from "../integerDecodingUtils";
 import { decodeZigZagDelta2Int32, decodeZigZagDelta2Int64 } from "../delta2";
 import { unpackBits32, unpackBits64 } from "../bitPacking";
+import { decodeFastPfor128 } from "../fastPfor128";
 import type { StreamHeader02 } from "./streamHeader02";
 
 /**
@@ -33,6 +34,10 @@ export function readWords32(
         case "varint":
             words = readVarints32(tile, offset, numWords, end);
             break;
+        case "fastPfor":
+            words = decodeFastPfor128(tile, offset.get(), header.byteLength, numWords);
+            offset.set(end);
+            break;
         default:
             throw notSupported(header);
     }
@@ -58,7 +63,8 @@ export function readWords64(
             words = readVarints64(tile, offset, numWords, end);
             break;
         default:
-            throw notSupported(header);
+            // The reference decoder has no 64-bit FastPFOR form.
+            throw new Error(`v2 ${header.physical} is not defined for 64-bit words`);
     }
     expectConsumed(offset, end, header);
     return words;

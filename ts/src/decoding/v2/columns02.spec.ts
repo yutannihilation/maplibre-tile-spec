@@ -59,6 +59,8 @@ describe("decodeColumns02 - id fixtures", () => {
         "ids64_minmax_delta",
         "ids64_opt_delta",
         "ids64_rle",
+        "ids_fpf",
+        "ids_delta_fpf",
     ])("decodes %s like the reference", (name) => {
         const { tile, expected } = fixture(name);
         expect(featureTablesToFeatureCollection(decodeTile(tile, undefined, false))).toEqual(expected);
@@ -164,6 +166,7 @@ describe("decodeColumns02 - float fixtures", () => {
         "prop_f64_nan",
         "prop_f64_pos_inf_np",
         "prop_f64_val_null",
+        "prop_f64_alp_offset_np",
     ])("decodes %s like the reference", (name) => {
         const { tile, expected } = fixture(name);
         expect(featureTablesToFeatureCollection(decodeTile(tile, undefined, false))).toEqual(expected);
