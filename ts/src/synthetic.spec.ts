@@ -8,36 +8,14 @@ import {
     writeActualOutput,
 } from "../../test/synthetic/synthetic-test-utils";
 import decodeTile from "./mltDecoder";
+import { UNIMPLEMENTED_SYNTHETICS_02 } from "./decoding/v2/unimplementedSynthetics02";
 
 /**
  * Synthetics the decoder cannot handle yet. These still run: `expectUnsupported` asserts they fail,
- * so an entry that starts decoding correctly fails the test until it is removed from this list.
+ * so an entry that starts decoding correctly fails the test until it is removed from the list.
  * Prefer fixing the decoder over adding to it.
- *
- * The v2 (`0x02`) fixtures are grouped by the decoder feature they need, so each feature can be
- * unlisted on its own as v2 support lands. A trailing `*` matches every fixture with that prefix.
  */
-const UNIMPLEMENTED_SYNTHETICS: string[] = [
-    // geometry: layouts, vertex dictionary, Morton, tessellation, rANS
-    "0x02/point*",
-    "0x02/extent_*",
-    "0x02/line*",
-    "0x02/multiline*",
-    "0x02/multipoint*",
-    "0x02/poly*",
-    "0x02/mix_*",
-    // id columns
-    "0x02/id*",
-    // property columns and presence
-    "0x02/prop_*",
-    "0x02/props_*",
-    "0x02/presence_*",
-    "0x02/bool_*",
-    // v2-only data: m-values, nested properties, z coordinates
-    "0x02/mvalues*",
-    "0x02/nested_*",
-    "0x02/z_*",
-];
+const UNIMPLEMENTED_SYNTHETICS: string[] = [...UNIMPLEMENTED_SYNTHETICS_02];
 
 describe("MLT Decoder - Synthetic tests", () => {
     expect.addEqualityTesters([compareWithTolerance]);

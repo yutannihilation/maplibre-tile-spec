@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { compareWithTolerance, getTestCases } from "../../../test/synthetic/synthetic-test-utils";
 import decodeTile from "../mltDecoder";
+import { UNIMPLEMENTED_SYNTHETICS_02 } from "../decoding/v2/unimplementedSynthetics02";
 import { featureTablesToFeatureCollection, getGeometry } from "../vector/featureTablesToGeoJson";
 import type FeatureTable from "../vector/featureTable";
 import { encodeTile, type Feature, type FeatureGeometry, type Layer, type PropertyValue } from "./mltEncoder";
@@ -9,8 +10,11 @@ import { encodeTile, type Feature, type FeatureGeometry, type Layer, type Proper
 /**
  * Fixtures that cannot survive this round trip. Each is checked below to still *fail*, so an entry
  * that starts working fails the suite until it is removed from this list.
+ *
+ * The encoder writes v1, so a v2 fixture round-trips as soon as the decoder reads it: the list is
+ * the decoder's, plus any v2-only content v1 cannot carry.
  */
-const UNSUPPORTED: string[] = ["0x02"];
+const UNSUPPORTED: string[] = [...UNIMPLEMENTED_SYNTHETICS_02];
 
 /**
  * Decodes each synthetic `.mlt`, re-encodes what came out, and checks the result still decodes to

@@ -1,5 +1,6 @@
 import type IntWrapper from "../intWrapper";
 import { decodeZigZagInt64Value } from "../integerDecodingUtils";
+import { readU8, readVarint32, readVarint64 } from "./bytes02";
 
 /**
  * The v2 stream header, as `docs/specification/v2.md#streams` lays it out:
@@ -152,39 +153,6 @@ function requirePhysical(encByte: number, family: Family02, bits: number, why: s
     }
 }
 
-function readByte(tile: Uint8Array, offset: IntWrapper): number {
-    const pos = offset.get();
-    if (pos >= tile.length) {
-        throw new Error(`Stream header overruns the tile at byte ${pos}`);
-    }
-    offset.set(pos + 1);
-    return tile[pos];
-}
-
-function readVarint32(tile: Uint8Array, offset: IntWrapper): number {
-    let value = 0;
-    for (let shift = 0; shift < 35; shift += 7) {
-        const b = readByte(tile, offset);
-        value |= (b & 0x7f) << shift;
-        if (b < 0x80) {
-            return value >>> 0;
-        }
-    }
-    throw new Error(`Varint longer than 32 bits at byte ${offset.get()}`);
-}
-
-function readVarint64(tile: Uint8Array, offset: IntWrapper): bigint {
-    let value = 0n;
-    for (let shift = 0n; shift < 70n; shift += 7n) {
-        const b = readByte(tile, offset);
-        value |= BigInt(b & 0x7f) << shift;
-        if (b < 0x80) {
-            return value;
-        }
-    }
-    throw new Error(`Varint longer than 64 bits at byte ${offset.get()}`);
-}
-
 /** `scale` numbers the valid `(e, f)` pairs with `f <= e` row by row, so `e` is the row the byte falls in. */
 function alpScale(encByte: number, family: Family02, byte: number): { e: number; f: number } {
     for (let e = 0; e <= ALP_MAX_EXPONENT; e++) {
@@ -209,7 +177,7 @@ export function readStreamHeader02(
     family: Family02,
     impliedCount?: number,
 ): StreamHeader02 {
-    const encByte = readByte(tile, offset);
+    const encByte = readU8(tile, offset, "Stream header");
     const code = (encByte & LOGICAL_MASK) >> LOGICAL_SHIFT;
     const logical = members(family)[code];
     if (logical === undefined) {
@@ -317,13 +285,13 @@ export function readStreamHeader02(
     }
 
     if (family === "bytes") {
-        header.byteLength = readVarint32(tile, offset);
+        header.byteLength = readVarint32(tile, offset, "Stream header");
         header.numValues = header.byteLength;
         return header;
     }
 
     if (explicitCount) {
-        header.numValues = readVarint32(tile, offset);
+        header.numValues = readVarint32(tile, offset, "Stream header");
     } else if (impliedCount === undefined) {
         reject(encByte, family, "the context implies no count and the header carries none");
     } else {
@@ -335,16 +303,16 @@ export function readStreamHeader02(
     } else if (omitsByteLength) {
         header.byteLength = header.numValues * header.wordsPerValue * wordBytes(family);
     } else {
-        header.byteLength = readVarint32(tile, offset);
+        header.byteLength = readVarint32(tile, offset, "Stream header");
     }
 
     if (logical === "alp") {
-        const scale = alpScale(encByte, family, readByte(tile, offset));
-        const base = decodeZigZagInt64Value(readVarint64(tile, offset));
+        const scale = alpScale(encByte, family, readU8(tile, offset, "Stream header"));
+        const base = decodeZigZagInt64Value(readVarint64(tile, offset, "Stream header"));
         header.alp = { ...scale, base };
     }
     if (family === "vertex" && extension === XYZ) {
-        const zCode = readByte(tile, offset);
+        const zCode = readU8(tile, offset, "Stream header");
         const zStep = zCode + Z_STEP_MIN;
         if (zStep > Z_STEP_MAX) {
             reject(encByte, family, `z step code ${zCode} is reserved`);
@@ -352,8 +320,8 @@ export function readStreamHeader02(
         header.zStep = zStep;
     }
     if (logical === "morton") {
-        const bits = readVarint32(tile, offset);
-        const shift = readVarint32(tile, offset);
+        const bits = readVarint32(tile, offset, "Stream header");
+        const shift = readVarint32(tile, offset, "Stream header");
         if (bits > MORTON_MAX_BITS) {
             reject(encByte, family, `Morton grid of ${bits} bits exceeds ${MORTON_MAX_BITS}`);
         }
