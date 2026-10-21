@@ -42,6 +42,13 @@ describe("getTestCases skip list", () => {
         expect(active.some(({ name }) => name.startsWith("0x02/prop_i"))).toBe(true);
     });
 
+    it("matches a star anywhere in the entry", () => {
+        const { active, skipped } = getTestCases(["0x02/*_rans"]);
+        expect(skipped.map(({ name }) => name)).toContain("0x02/point_rans");
+        expect(skipped.every(({ name }) => name.endsWith("_rans"))).toBe(true);
+        expect(active.some(({ name }) => name === "0x02/point")).toBe(true);
+    });
+
     it("rejects a trailing-star entry that matches nothing", () => {
         expect(() => getTestCases(["0x02/no_such_fixture_*"])).toThrow(/unknown synthetic test/);
     });

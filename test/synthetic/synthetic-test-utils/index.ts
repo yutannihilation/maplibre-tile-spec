@@ -48,12 +48,17 @@ export function writeActualOutput(
 export type TestCase = { name: string; content: object; fileName: string };
 
 /**
- * A skip-list entry names one fixture (`0x01/poly_fpf`), a whole directory (`0x02`), or, with a
- * trailing `*`, every fixture whose path starts with the rest (`0x02/prop_f*`).
+ * A skip-list entry names one fixture (`0x01/poly_fpf`), a whole directory (`0x02`), or, with
+ * `*` standing for any run of characters, every fixture whose path matches (`0x02/prop_f*`,
+ * `0x02/*_rans`).
  */
 export function matchesSkipEntry(testName: string, entry: string): boolean {
-  if (entry.endsWith("*")) {
-    return testName.startsWith(entry.slice(0, -1));
+  if (entry.includes("*")) {
+    const pattern = entry
+      .split("*")
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join(".*");
+    return new RegExp(`^${pattern}$`).test(testName);
   }
   return testName === entry || testName.startsWith(`${entry}/`);
 }
@@ -76,7 +81,9 @@ export function getTestCases(skipList: string[]): {
     const jsonFile = mltFile.replace(/\.mlt$/, ".json");
     const expected = JSON.parse(readFileSync(jsonFile, "utf-8"));
     const testCase = { name: testName, fileName: mltFile, content: expected };
-    const skipEntry = skipList.find((entry) => matchesSkipEntry(testName, entry));
+    const skipEntry = skipList.find((entry) =>
+      matchesSkipEntry(testName, entry),
+    );
     if (skipEntry !== undefined) {
       matched.add(skipEntry);
       skipped.push(testCase);
@@ -90,7 +97,7 @@ export function getTestCases(skipList: string[]): {
     throw new Error(
       `Exclusion list references unknown synthetic test(s): ${unmatched.join(", ")}. ` +
         `Use the full path-style name, e.g. "0x01/poly_fpf", a directory, e.g. "0x02", ` +
-        `or a name prefix with a trailing "*", e.g. "0x02/prop_f*".`,
+        `or a pattern with "*" for any characters, e.g. "0x02/prop_f*" or "0x02/*_rans".`,
     );
   }
 

@@ -243,7 +243,7 @@ export function decodeGeometryColumn(
  * Handle the parsing of the different topology length buffers separate not generic to reduce the
  * branching and improve the performance
  */
-function decodeRootLengthStream(
+export function decodeRootLengthStream(
     geometryTypes: Uint32Array,
     rootLengthStream: Uint32Array,
     bufferId: number,
@@ -265,7 +265,7 @@ function decodeRootLengthStream(
     return rootBufferOffsets;
 }
 
-function decodeLevel1LengthStream(
+export function decodeLevel1LengthStream(
     geometryTypes: Uint32Array,
     rootOffsetBuffer: Uint32Array,
     level1LengthBuffer: Uint32Array,
@@ -305,7 +305,7 @@ function decodeLevel1LengthStream(
 /*
  * Case where no ring buffer exists so no MultiPolygon or Polygon geometry is part of the buffer
  */
-function decodeLevel1WithoutRingBufferLengthStream(
+export function decodeLevel1WithoutRingBufferLengthStream(
     geometryTypes: Uint32Array,
     rootOffsetBuffer: Uint32Array,
     level1LengthBuffer: Uint32Array,
@@ -335,7 +335,7 @@ function decodeLevel1WithoutRingBufferLengthStream(
     return level1BufferOffsets;
 }
 
-function decodeLevel2LengthStream(
+export function decodeLevel2LengthStream(
     geometryTypes: Uint32Array,
     rootOffsetBuffer: Uint32Array,
     level1OffsetBuffer: Uint32Array,

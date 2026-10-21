@@ -1,32 +1,22 @@
 /**
  * The v2 synthetic fixtures (`test/synthetic/0x02`) the decoder cannot handle yet, grouped by the
- * feature they need. A trailing `*` matches every fixture with that prefix.
+ * feature they need. A `*` in an entry matches any run of characters.
  *
  * The decoder's synthetic suite asserts that each of these still fails to decode, and the
  * encoder's round-trip suite that each still fails to round-trip, so an entry that starts
  * working fails both until it is removed. Remove entries as v2 support lands; add none.
  */
 export const UNIMPLEMENTED_SYNTHETICS_02: readonly string[] = [
-    // geometry: layouts, vertex dictionary, Morton, tessellation, rANS
-    "0x02/point_morton_dictionary",
-    "0x02/point_rans",
-    "0x02/extent_*",
-    "0x02/line*",
-    "0x02/multiline*",
-    "0x02/multipoint*",
-    "0x02/poly*",
-    "0x02/mix_2_l*",
-    "0x02/mix_2_m*",
-    "0x02/mix_2_po*",
-    "0x02/mix_2_pt_l*",
-    "0x02/mix_2_pt_m*",
-    "0x02/mix_2_pt_po*",
-    "0x02/mix_3*",
-    "0x02/mix_4*",
-    "0x02/mix_5*",
-    "0x02/mix_6*",
-    "0x02/mix_7*",
-    "0x02/mix_pt*",
+    // geometry: vertex dictionary and Morton, FastPFOR, tessellation, rANS
+    "0x02/*_dictionary",
+    "0x02/*_curve_morton",
+    "0x02/*_ring_morton",
+    "0x02/*_hole_morton",
+    "0x02/multiline_morton",
+    "0x02/*_fpf*",
+    "0x02/*_tes*",
+    "0x02/*_tri",
+    "0x02/*_rans",
     // id columns
     "0x02/id*",
     // property columns and presence

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import decodeTile from "../../mltDecoder";
 import { featureTablesToFeatureCollection } from "../../vector/featureTablesToGeoJson";
 import { GEOMETRY_TYPE } from "../../vector/geometry/geometryType";
+import type { GeometryVector } from "../../vector/geometry/geometryVector";
 
 const SYNTHETIC = resolve(__dirname, "../../../../test/synthetic/0x02");
 
@@ -34,7 +35,24 @@ function tile(body: number[]): Uint8Array {
 const NAME = [0x06, ...Buffer.from("layer1")];
 
 describe("decodeLayer02 - fixtures", () => {
-    it.each(["point", "mix_2_pt_pt"])("decodes %s like the reference", (name) => {
+    it.each([
+        "point",
+        "mix_2_pt_pt",
+        "line",
+        "line_zero_length",
+        "multiline",
+        "multipoint",
+        "poly",
+        "poly_hole",
+        "poly_hole_touching",
+        "poly_multi",
+        "poly_self_intersect",
+        "extent_512",
+        "extent_buf_131072",
+        "mix_2_line_polyh",
+        "mix_3_mpt_poly_mpt",
+        "mix_7_pt_line_poly_polyh_mpt_mline_mpoly",
+    ])("decodes %s like the reference", (name) => {
         const { tile, expected } = fixture(name);
         const tables = decodeTile(tile, undefined, false);
         expect(featureTablesToFeatureCollection(tables)).toEqual(expected);
@@ -91,9 +109,21 @@ describe("decodeLayer02 - layer header", () => {
         expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00]))).toThrow(/trailing/i);
     });
 
+    it("rejects a type the layout has no length streams for", () => {
+        // uniform Polygon on the Lines layout, and MultiPoint on the Points layout
+        expect(() => decodeTile(tile([...NAME, 0x30, 0x01, 0x04, 0x00]))).toThrow(/does not fit/);
+        expect(() => decodeTile(tile([...NAME, 0x40, 0x01, 0x00, 0x00]))).toThrow(/does not fit/);
+    });
+
+    it("rejects a vertex stream whose count disagrees with the topology", () => {
+        // uniform LineString, Lines layout, one part of 3 vertices, but only 2 vertex pairs
+        const body = [...NAME, 0x20, 0x01, 0x04, 0x08, 0x01, 0x03, 0x80, 0x02, ...le32(0, 0, 2, 2), 0x00];
+        expect(() => decodeTile(tile(body))).toThrow(/vertices/);
+    });
+
     it("rejects what later steps decode, rather than reading past it", () => {
-        // a Lines layout
-        expect(() => decodeTile(tile([...NAME, 0x20, 0x00, 0x04, 0x00, 0x00, 0x00]))).toThrow(/not supported/);
+        // a PointsDict layout
+        expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00]))).toThrow(/not supported/);
         // one counted column
         expect(() => decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x01, 0x05]))).toThrow(/not supported/);
     });
@@ -104,6 +134,8 @@ describe("decodeLayer02 - vertex encodings", () => {
         ["raw", [0x00, ...le32(26, 84, 28, 88)]],
         ["delta", [0x18, 0x04, 26, 58, 55, 60]],
         ["componentwise delta", [0x28, 0x04, 26, 84, 2, 4]],
+        // delta2: x deltas 13, 1 -> delta2 13, -12 -> zigzag 26, 23; y deltas 42, 2 -> 42, -40 -> 84, 79
+        ["componentwise delta2", [0x48, 0x04, 26, 84, 23, 79]],
     ];
     it.each(cases)("decodes %s pairs", (_label, vertices) => {
         const body = [...NAME, 0x10, 0x02, 0x00, ...vertices, 0x00];
@@ -126,6 +158,26 @@ describe("decodeLayer02 - vertex encodings", () => {
         const [table] = decodeTile(tile([...NAME, 0x10, 0x00, 0x00, 0x00, 0x00]));
         expect(table.numFeatures).toBe(0);
         expect(table.getFeatures()).toEqual([]);
+    });
+});
+
+describe("decodeLayer02 - topology", () => {
+    it("decodes a mixed layer with every nesting level", () => {
+        const [table] = decodeTile(fixture("mix_7_pt_line_poly_polyh_mpt_mline_mpoly").tile);
+        const features = table.getFeatures();
+        expect(features.map((f) => f.geometry.type)).toEqual([0, 1, 2, 2, 3, 4, 5]);
+        const polygonWithHole = features[3].geometry.coordinates;
+        expect(polygonWithHole.length).toBe(2);
+        // rings come back closed, the first vertex repeated at the end
+        expect(polygonWithHole[0][0]).toEqual(polygonWithHole[0][polygonWithHole[0].length - 1]);
+    });
+
+    it("exposes the offset levels a renderer indexes", () => {
+        const [table] = decodeTile(fixture("poly_hole").tile);
+        const { topologyVector } = table.geometryVector as GeometryVector;
+        expect(topologyVector.geometryOffsets).toBeUndefined();
+        expect(Array.from(topologyVector.partOffsets)).toEqual([0, 2]);
+        expect(topologyVector.ringOffsets.length).toBe(3);
     });
 });
 
