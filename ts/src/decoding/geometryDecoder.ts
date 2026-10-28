@@ -18,6 +18,7 @@ import {
 import { createFlatGeometryVector, createFlatGeometryVectorMortonEncoded } from "../vector/geometry/flatGeometryVector";
 import { OffsetType } from "../metadata/tile/offsetType";
 import { createConstGpuVector } from "../vector/geometry/constGpuVector";
+import { GEOMETRY_TYPE } from "../vector/geometry/geometryType";
 import { createFlatGpuVector } from "../vector/geometry/flatGpuVector";
 import type { GeometryVector, MortonSettings } from "../vector/geometry/geometryVector";
 import type { GpuVector } from "../vector/geometry/gpuVector";
@@ -110,8 +111,15 @@ export function decodeGeometryColumn(
                 );
             }
 
-            /* Case when the no Polygon outlines are encoded in the tile */
-            return createConstGpuVector(numFeatures, geometryType, triangleOffsets, indexBuffer, vertexBuffer);
+            /* Case when no Polygon outlines are encoded in the tile: each feature reads back as the
+             * multi-polygon of its triangles */
+            return createConstGpuVector(
+                numFeatures,
+                GEOMETRY_TYPE.MULTIPOLYGON,
+                triangleOffsets,
+                indexBuffer,
+                vertexBuffer,
+            );
         }
 
         return mortonSettings === undefined
@@ -210,8 +218,10 @@ export function decodeGeometryColumn(
 
     if (indexBuffer && !partOffsets) {
         /* Case when the indices of a Polygon outline are not encoded in the data so no
-         *  topology data are present in the tile */
-        return createFlatGpuVector(geometryTypeVector, triangleOffsets, indexBuffer, vertexBuffer);
+         *  topology data are present in the tile: each feature reads back as the multi-polygon
+         *  of its triangles */
+        const multiPolygons = new Uint32Array(geometryTypeVector.length).fill(GEOMETRY_TYPE.MULTIPOLYGON);
+        return createFlatGpuVector(multiPolygons, triangleOffsets, indexBuffer, vertexBuffer);
     }
 
     if (indexBuffer) {

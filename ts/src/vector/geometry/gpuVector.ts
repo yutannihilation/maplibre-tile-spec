@@ -1,5 +1,6 @@
 import Point from "@mapbox/point-geometry";
 import { createFlatGeometryVector } from "./flatGeometryVector";
+import { GEOMETRY_TYPE } from "./geometryType";
 import type { CoordinatesArray } from "./geometryVector";
 import type { TopologyVector } from "./topologyVector";
 import type { Vertex } from "./vertexSequence";
@@ -68,6 +69,10 @@ export abstract class GpuVector implements Iterable<CoordinatesArray> {
         const vertices = this._vertexBuffer;
         const zBuffer = this._zBuffer;
         for (let i = 0; i < this.numGeometries; i++) {
+            // Under any other type a reader would take the triangles for a shell and its holes.
+            if (this.geometryType(i) !== GEOMETRY_TYPE.MULTIPOLYGON) {
+                throw new Error("A GpuVector without topology holds triangles, so its features must be multi-polygons");
+            }
             const rings: CoordinatesArray = [];
             for (let t = offsets[i]; t < offsets[i + 1]; t++) {
                 const ring: Point[] = new Array(4);
