@@ -39,22 +39,3 @@ export function attachZ(
         }
     }
 }
-
-/**
- * How many vertices of the vertex sequence each feature holds: its stored vertices, without the
- * vertex that closes each ring. A dictionary layout counts every vertex, shared entries included.
- */
-export function featureVertexCounts(geometries: CoordinatesArray[]): Uint32Array {
-    const counts = new Uint32Array(geometries.length);
-    for (let i = 0; i < geometries.length; i++) {
-        let count = 0;
-        for (const ring of geometries[i]) {
-            count += ring.length;
-            if (ring.length > 1 && isClosingVertex(ring, ring.length - 1)) {
-                count--;
-            }
-        }
-        counts[i] = count;
-    }
-    return counts;
-}

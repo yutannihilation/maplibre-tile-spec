@@ -292,14 +292,15 @@ function getLineStringOrRing(
     numVertices: number,
     isRing: boolean,
 ): Point[] {
-    const vertices: Point[] = new Array(isRing ? numVertices + 1 : numVertices);
+    // A ring closes by repeating its first vertex, which an empty ring has none of.
+    const vertices: Point[] = new Array(isRing && numVertices > 0 ? numVertices + 1 : numVertices);
     for (let i = 0; i < numVertices * 2; i += 2) {
         const x = vertexBuffer[startIndex + i];
         const y = vertexBuffer[startIndex + i + 1];
         vertices[i / 2] = new Point(x, y);
     }
 
-    if (isRing) {
+    if (isRing && numVertices > 0) {
         vertices[vertices.length - 1] = vertices[0];
     }
     return vertices;
@@ -312,7 +313,8 @@ function decodeVec2DictionaryEncodedVertices(
     numVertices: number,
     isRing: boolean,
 ): Point[] {
-    const vertices: Point[] = new Array(isRing ? numVertices + 1 : numVertices);
+    // A ring closes by repeating its first vertex, which an empty ring has none of.
+    const vertices: Point[] = new Array(isRing && numVertices > 0 ? numVertices + 1 : numVertices);
     for (let i = 0; i < numVertices * 2; i += 2) {
         const offset = vertexOffsets[vertexOffset + i / 2] * 2;
         const x = vertexBuffer[offset];
@@ -320,7 +322,7 @@ function decodeVec2DictionaryEncodedVertices(
         vertices[i / 2] = new Point(x, y);
     }
 
-    if (isRing) {
+    if (isRing && numVertices > 0) {
         vertices[vertices.length - 1] = vertices[0];
     }
     return vertices;
@@ -334,14 +336,15 @@ function decodeMortonDictionaryEncodedVertices(
     isRing: boolean,
     mortonSettings: MortonSettings,
 ): Point[] {
-    const vertices: Point[] = new Array(isRing ? numVertices + 1 : numVertices);
+    // A ring closes by repeating its first vertex, which an empty ring has none of.
+    const vertices: Point[] = new Array(isRing && numVertices > 0 ? numVertices + 1 : numVertices);
     for (let i = 0; i < numVertices; i++) {
         const offset = vertexOffsets[vertexOffset + i];
         const mortonEncodedVertex = vertexBuffer[offset];
         const vertex = decodeZOrderCurve(mortonEncodedVertex, mortonSettings.numBits, mortonSettings.coordinateShift);
         vertices[i] = new Point(vertex.x, vertex.y);
     }
-    if (isRing) {
+    if (isRing && numVertices > 0) {
         vertices[vertices.length - 1] = vertices[0];
     }
 

@@ -4,7 +4,6 @@ import FeatureTable from "../../vector/featureTable";
 import type { GEOMETRY_TYPE } from "../../vector/geometry/geometryType";
 import { readString02, readU8, readVarint32, readVarint64 } from "./bytes02";
 import { decodeColumns02, decodeMValueColumns02 } from "./columns02";
-import { featureVertexCounts } from "../../vector/geometry/vertexSequence";
 import type { MValueColumn } from "../../vector/mValueColumn";
 import { allowsMValues, decodeGeometry02, type GeoLayout02, parseGeoLayout02 } from "./geometry02";
 import { readSharedPresence02 } from "./presence02";
@@ -119,9 +118,7 @@ export function decodeLayer02(
     const { idVector, propertyVectors, names } = decodeColumns02(tile, offset, counts.columns, ctx);
     let mValueColumns: MValueColumn[] = [];
     if (header.mValues) {
-        // The geometry is the only place each feature's vertex count can be read from.
-        const vertexCounts = featureVertexCounts(geometry.vector.getGeometries());
-        mValueColumns = decodeMValueColumns02(tile, offset, counts.mValues, ctx, names, vertexCounts);
+        mValueColumns = decodeMValueColumns02(tile, offset, counts.mValues, ctx, names, geometry.vertexCounts);
     }
 
     if (offset.get() !== blockEnd) {

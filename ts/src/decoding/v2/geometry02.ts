@@ -96,6 +96,8 @@ export interface Geometry02 {
     vector: GeometryVector | GpuVector;
     /** The z grid's exponent when the vertices are `(x, y, z)` triples. */
     zStep?: number;
+    /** How many vertices of the vertex sequence each feature holds, which its m-values run over. */
+    vertexCounts: Uint32Array;
 }
 
 export function decodeGeometry02(
@@ -108,13 +110,14 @@ export function decodeGeometry02(
 ): Geometry02 {
     const uniform = header.uniformType;
     const types = uniform === undefined ? readTypes(tile, offset, featureCount) : undefined;
-    checkTypesFitLayout(types ?? new Uint32Array(featureCount).fill(uniform), layout);
+    // The layout check and the offset conversions branch on each feature's type, so a uniform
+    // layer spells its type out once.
+    const typeOfEach = types ?? new Uint32Array(featureCount).fill(uniform);
+    checkTypesFitLayout(typeOfEach, layout);
 
     const geoLengths = hasGeoLengths(layout) ? readLengths(tile, offset, featureCount) : undefined;
     const partLengths = hasPartLengths(layout) ? readLengths(tile, offset, featureCount) : undefined;
     const ringLengths = hasRingLengths(layout) ? readLengths(tile, offset, featureCount) : undefined;
-    // The offset conversions branch on each feature's type, so a uniform layer spells its type out.
-    const typeOfEach = types ?? new Uint32Array(featureCount).fill(uniform);
     const topology = decodeTopology(typeOfEach, geoLengths, partLengths, ringLengths);
 
     let tessellation: Tessellation02 | undefined;
@@ -158,15 +161,16 @@ export function decodeGeometry02(
     }
 
     const zStep = vertexHeader.zStep;
+    const vertexCounts = featureVertexCounts(topology, featureCount);
     if (tessellation !== undefined) {
         const vector = tessellatedVector(layout, typeOfEach, uniform, tessellation, vertices, zBuffer, topology);
-        return { vector, zStep };
+        return { vector, zStep, vertexCounts };
     }
     const vector =
         types === undefined
             ? createConstGeometryVector(featureCount, uniform, topology, vertexOffsets, vertices, zBuffer)
             : createFlatGeometryVector(types, topology, vertexOffsets, vertices, zBuffer);
-    return { vector, zStep };
+    return { vector, zStep, vertexCounts };
 }
 
 /** The triangle streams of a tessellated layout, decoded to an index buffer. */
@@ -338,6 +342,34 @@ function decodeMortonDeltas(words: Uint32Array, morton: MortonParams02): Int32Ar
 function countVertices(topology: TopologyVector, featureCount: number): number {
     const deepest = topology.ringOffsets ?? topology.partOffsets ?? topology.geometryOffsets;
     return deepest === undefined ? featureCount : deepest[deepest.length - 1];
+}
+
+/**
+ * How many vertices of the vertex sequence each feature holds: the span its entry at each offset
+ * level opens at the next one, down to the vertices. A point layer has one per feature. An empty
+ * ring holds none, and a dictionary layout counts every vertex, shared entries included.
+ */
+function featureVertexCounts(topology: TopologyVector, featureCount: number): Uint32Array {
+    const counts = new Uint32Array(featureCount);
+    const { geometryOffsets, partOffsets, ringOffsets } = topology;
+    for (let i = 0; i < featureCount; i++) {
+        let start = i;
+        let end = i + 1;
+        if (geometryOffsets !== undefined) {
+            start = geometryOffsets[start];
+            end = geometryOffsets[end];
+        }
+        if (partOffsets !== undefined) {
+            start = partOffsets[start];
+            end = partOffsets[end];
+        }
+        if (ringOffsets !== undefined) {
+            start = ringOffsets[start];
+            end = ringOffsets[end];
+        }
+        counts[i] = end - start;
+    }
+    return counts;
 }
 
 /**
