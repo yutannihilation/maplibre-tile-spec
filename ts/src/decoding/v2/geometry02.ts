@@ -19,7 +19,8 @@ import type { GpuVector } from "../../vector/geometry/gpuVector";
 import { decodeTriangleTrees } from "../triangleTrees";
 import { decodeRansVertices } from "../rans";
 import { decodeZOrderCurve } from "../../vector/geometry/zOrderCurve";
-import { decodeIntStream02, readWords32 } from "./intStream02";
+import { decodeIntStream02, readWords32, zigZag32, zigZagDelta32 } from "./intStream02";
+import { offsetsOf } from "./stringStream02";
 import { type MortonParams02, readStreamHeader02, type StreamHeader02 } from "./streamHeader02";
 import type { LayerHeader02 } from "./layerDecoder02";
 
@@ -186,12 +187,8 @@ function readTessellation(tile: Uint8Array, offset: IntWrapper, featureCount: nu
     const symbols = readLengths(tile, offset, featureCount);
     const cycles = readLengths(tile, offset, featureCount);
     const indexBuffer = decodeTriangleTrees(symbols, cycles);
-    const triangleOffsets = new Uint32Array(triangleLengths.length + 1);
-    let total = 0;
-    for (let i = 0; i < triangleLengths.length; i++) {
-        total += triangleLengths[i];
-        triangleOffsets[i + 1] = total;
-    }
+    const triangleOffsets = offsetsOf(triangleLengths);
+    const total = triangleOffsets[triangleOffsets.length - 1];
     if (total !== symbols.length) {
         throw new Error(`Triangle lengths sum to ${total} but there are ${symbols.length} triangles`);
     }
@@ -423,24 +420,12 @@ function decodeVertices02(
     const numWords = header.numValues * (xyz ? 3 : 2);
     let vertices: Int32Array;
     switch (header.logical) {
-        case "none": {
-            const words = readWords32(tile, offset, header, numWords);
-            vertices = new Int32Array(words.length);
-            for (let i = 0; i < words.length; i++) {
-                vertices[i] = decodeZigZagInt32Value(words[i]);
-            }
+        case "none":
+            vertices = zigZag32(readWords32(tile, offset, header, numWords));
             break;
-        }
-        case "delta": {
-            const words = readWords32(tile, offset, header, numWords);
-            vertices = new Int32Array(words.length);
-            let value = 0;
-            for (let i = 0; i < words.length; i++) {
-                value = (value + decodeZigZagInt32Value(words[i])) | 0;
-                vertices[i] = value;
-            }
+        case "delta":
+            vertices = zigZagDelta32(readWords32(tile, offset, header, numWords));
             break;
-        }
         case "cwDelta": {
             const words = readWords32(tile, offset, header, numWords);
             vertices = xyz ? decodeComponentwiseDeltaVec3(words) : decodeComponentwiseDeltaVec2(words);

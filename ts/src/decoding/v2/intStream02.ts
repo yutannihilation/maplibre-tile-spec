@@ -261,7 +261,7 @@ function expandRle64(pairs: BigUint64Array, numValues: number): BigUint64Array {
 }
 
 /** Prefix sum of zigzag deltas from zero, wrapping at 32 bits. */
-function zigZagDelta32(words: Uint32Array): Int32Array {
+export function zigZagDelta32(words: Uint32Array): Int32Array {
     const values = new Int32Array(words.length);
     let value = 0;
     for (let i = 0; i < words.length; i++) {
@@ -281,7 +281,8 @@ function zigZagDelta64(words: BigUint64Array): BigInt64Array {
     return values;
 }
 
-function zigZag32(words: Uint32Array): Int32Array {
+/** Zigzag-decodes every word. */
+export function zigZag32(words: Uint32Array): Int32Array {
     const values = new Int32Array(words.length);
     for (let i = 0; i < words.length; i++) {
         values[i] = decodeZigZagInt32Value(words[i]);
