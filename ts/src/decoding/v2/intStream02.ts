@@ -3,6 +3,7 @@ import { decodeUint32sLE, decodeUint64sLE } from "../decodingUtils";
 import { decodeZigZagInt32Value, decodeZigZagInt64Value } from "../integerDecodingUtils";
 import { decodeZigZagDelta2Int32, decodeZigZagDelta2Int64 } from "../delta2";
 import { unpackBits32, unpackBits64 } from "../bitPacking";
+import { readVarint32, readVarint64 } from "./bytes02";
 import { decodeFastPfor128 } from "../fastPfor128";
 import type { StreamHeader02 } from "./streamHeader02";
 
@@ -170,64 +171,20 @@ function expectConsumed(offset: IntWrapper, end: number, header: StreamHeader02)
     }
 }
 
-/** Zigzag varints, canonical: a multi-byte varint must not end in a zero byte. */
+/** `numWords` varints, canonical, from a payload that ends at `end`. */
 function readVarints32(tile: Uint8Array, offset: IntWrapper, numWords: number, end: number): Uint32Array {
     const words = new Uint32Array(numWords);
-    let pos = offset.get();
     for (let i = 0; i < numWords; i++) {
-        let value = 0;
-        let shift = 0;
-        const start = pos;
-        for (;;) {
-            if (pos >= end) {
-                throw new Error(`Varint overruns the stream payload at byte ${pos}`);
-            }
-            const b = tile[pos++];
-            if (shift === 28 && b > 0x0f) {
-                throw new Error(`Varint longer than 32 bits at byte ${start}`);
-            }
-            value |= (b & 0x7f) << shift;
-            if (b < 0x80) {
-                if (b === 0 && pos - start > 1) {
-                    throw new Error(`Non-canonical varint at byte ${start}`);
-                }
-                break;
-            }
-            shift += 7;
-        }
-        words[i] = value >>> 0;
+        words[i] = readVarint32(tile, offset, "Stream word", end);
     }
-    offset.set(pos);
     return words;
 }
 
 function readVarints64(tile: Uint8Array, offset: IntWrapper, numWords: number, end: number): BigUint64Array {
     const words = new BigUint64Array(numWords);
-    let pos = offset.get();
     for (let i = 0; i < numWords; i++) {
-        let value = 0n;
-        let shift = 0n;
-        const start = pos;
-        for (;;) {
-            if (pos >= end) {
-                throw new Error(`Varint overruns the stream payload at byte ${pos}`);
-            }
-            const b = tile[pos++];
-            if (shift === 63n && b > 0x01) {
-                throw new Error(`Varint longer than 64 bits at byte ${start}`);
-            }
-            value |= BigInt(b & 0x7f) << shift;
-            if (b < 0x80) {
-                if (b === 0 && pos - start > 1) {
-                    throw new Error(`Non-canonical varint at byte ${start}`);
-                }
-                break;
-            }
-            shift += 7n;
-        }
-        words[i] = value;
+        words[i] = readVarint64(tile, offset, "Stream word", end);
     }
-    offset.set(pos);
     return words;
 }
 
@@ -251,7 +208,7 @@ function readRlePairs64(tile: Uint8Array, offset: IntWrapper, header: StreamHead
     }
     const pairs: bigint[] = [];
     while (offset.get() < end) {
-        pairs.push(readVarints64(tile, offset, 1, end)[0]);
+        pairs.push(readVarint64(tile, offset, "RLE word", end));
     }
     if (pairs.length % 2 !== 0) {
         throw new Error(`RLE stream holds ${pairs.length} words, which is not whole (run, value) pairs`);
@@ -262,31 +219,9 @@ function readRlePairs64(tile: Uint8Array, offset: IntWrapper, header: StreamHead
 /** Every varint up to `end`, for a payload whose word count only its byte length gives. */
 function scanVarints32(tile: Uint8Array, offset: IntWrapper, end: number): number[] {
     const words: number[] = [];
-    let pos = offset.get();
-    while (pos < end) {
-        let value = 0;
-        let shift = 0;
-        const start = pos;
-        for (;;) {
-            if (pos >= end) {
-                throw new Error(`Varint overruns the stream payload at byte ${pos}`);
-            }
-            const b = tile[pos++];
-            if (shift === 28 && b > 0x0f) {
-                throw new Error(`Varint longer than 32 bits at byte ${start}`);
-            }
-            value |= (b & 0x7f) << shift;
-            if (b < 0x80) {
-                if (b === 0 && pos - start > 1) {
-                    throw new Error(`Non-canonical varint at byte ${start}`);
-                }
-                break;
-            }
-            shift += 7;
-        }
-        words.push(value >>> 0);
+    while (offset.get() < end) {
+        words.push(readVarint32(tile, offset, "RLE word", end));
     }
-    offset.set(pos);
     return words;
 }
 

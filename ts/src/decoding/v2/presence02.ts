@@ -1,5 +1,6 @@
 import BitVector from "../../vector/flat/bitVector";
 import type IntWrapper from "../intWrapper";
+import { readVarint32 } from "./bytes02";
 import type { StreamHeader02 } from "./streamHeader02";
 
 /**
@@ -77,7 +78,7 @@ export function readPresence02(
             let at = 0;
             let present = false;
             while (at < count) {
-                const run = readVarint(tile, offset);
+                const run = readVarint32(tile, offset, "Presence run length");
                 const end = at + run;
                 if (end > count) {
                     throw new Error(`Presence run of ${run} values overruns the field's ${count}`);
@@ -177,21 +178,4 @@ export function readBoolStream02(tile: Uint8Array, offset: IntWrapper, header: S
         throw new Error(`A ${header.family} stream is not a bool stream`);
     }
     return readPresence02(tile, offset, header.numValues, header.logical as PresenceCoding02);
-}
-
-function readVarint(tile: Uint8Array, offset: IntWrapper): number {
-    let value = 0;
-    let pos = offset.get();
-    for (let shift = 0; shift < 35; shift += 7) {
-        if (pos >= tile.length) {
-            throw new Error(`Presence run length overruns the tile at byte ${pos}`);
-        }
-        const b = tile[pos++];
-        value += (b & 0x7f) * 2 ** shift;
-        if (b < 0x80) {
-            offset.set(pos);
-            return value;
-        }
-    }
-    throw new Error(`Presence run length is longer than 32 bits at byte ${offset.get()}`);
 }

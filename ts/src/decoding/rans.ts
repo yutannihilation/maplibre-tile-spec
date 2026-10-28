@@ -1,3 +1,6 @@
+import IntWrapper from "./intWrapper";
+import { readVarint32 } from "./v2/bytes02";
+
 /**
  * rANS over componentwise vertex deltas (`docs/encodings.md#rans`): each delta is a symbol coded
  * with a table picked by its context, plus the delta's low raw bits stored as they are. Four
@@ -187,21 +190,6 @@ class Lane {
     }
 }
 
-function readVarint(bytes: Uint8Array, pos: { at: number }): number {
-    let value = 0;
-    for (let shift = 0; shift < 35; shift += 7) {
-        if (pos.at >= bytes.length) {
-            throw new Error("rANS vertex stream is malformed: lane lengths truncated");
-        }
-        const b = bytes[pos.at++];
-        value |= (b & 0x7f) << shift;
-        if (b < 0x80) {
-            return value >>> 0;
-        }
-    }
-    throw new Error("rANS vertex stream is malformed: lane length");
-}
-
 /**
  * Decodes `vertexCount` `(x, y)` pairs from a rANS payload. A run starts at each of `runOffsets`,
  * which start at 0 and end at the vertex count, or at every vertex when there are none.
@@ -230,24 +218,24 @@ export function decodeRansVertices(
         }
     }
 
-    const pos = { at: Math.ceil(r.bit / 8) };
+    const pos = new IntWrapper(Math.ceil(r.bit / 8));
     const lengths: number[] = [];
     for (let l = 0; l < LANES; l++) {
-        lengths.push(readVarint(rest, pos));
+        lengths.push(readVarint32(rest, pos, "rANS lane length"));
     }
     const lanes: Lane[] = [];
     for (const length of lengths) {
         if (length < 4 || length % 2 !== 0) {
             throw new Error("rANS vertex stream is malformed: lane length");
         }
-        if (pos.at + length > rest.length) {
+        if (pos.get() + length > rest.length) {
             throw new Error("rANS vertex stream is malformed: lanes truncated");
         }
-        lanes.push(new Lane(rest.subarray(pos.at, pos.at + length)));
-        pos.at += length;
+        lanes.push(new Lane(rest.subarray(pos.get(), pos.get() + length)));
+        pos.add(length);
     }
-    const raw = new BitReader(rest.subarray(pos.at));
-    const rawLength = rest.length - pos.at;
+    const raw = new BitReader(rest.subarray(pos.get()));
+    const rawLength = rest.length - pos.get();
 
     const out = new Int32Array(vertexCount * 2);
     const info = INFO[depth];

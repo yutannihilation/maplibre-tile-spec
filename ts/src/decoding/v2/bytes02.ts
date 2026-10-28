@@ -12,13 +12,16 @@ export function readU8(tile: Uint8Array, offset: IntWrapper, what: string): numb
     return tile[pos];
 }
 
-/** An unsigned 32-bit varint. A multi-byte varint must not end in a zero byte, so every value has one spelling. */
-export function readVarint32(tile: Uint8Array, offset: IntWrapper, what: string): number {
+/**
+ * An unsigned 32-bit varint. A multi-byte varint must not end in a zero byte, so every value has
+ * one spelling. `end` bounds the bytes it may take, for a varint inside a stream payload.
+ */
+export function readVarint32(tile: Uint8Array, offset: IntWrapper, what: string, end = tile.length): number {
     let value = 0;
     const start = offset.get();
     let pos = start;
     for (let shift = 0; shift < 35; shift += 7) {
-        if (pos >= tile.length) {
+        if (pos >= end) {
             throw new Error(`${what} overruns the tile at byte ${pos}`);
         }
         const b = tile[pos++];
@@ -37,13 +40,13 @@ export function readVarint32(tile: Uint8Array, offset: IntWrapper, what: string)
     throw new Error(`${what} at byte ${start} is a varint longer than 32 bits`);
 }
 
-/** An unsigned 64-bit varint, as a bigint. */
-export function readVarint64(tile: Uint8Array, offset: IntWrapper, what: string): bigint {
+/** An unsigned 64-bit varint, as a bigint, bounded like {@link readVarint32}. */
+export function readVarint64(tile: Uint8Array, offset: IntWrapper, what: string, end = tile.length): bigint {
     let value = 0n;
     const start = offset.get();
     let pos = start;
     for (let shift = 0n; shift < 70n; shift += 7n) {
-        if (pos >= tile.length) {
+        if (pos >= end) {
             throw new Error(`${what} overruns the tile at byte ${pos}`);
         }
         const b = tile[pos++];

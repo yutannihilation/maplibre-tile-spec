@@ -49,7 +49,7 @@ describe("decodeRansVertices", () => {
         expect(() => decode([], [0], 0)).toThrow(/empty/);
         expect(() => decode([3, 0, 0], [0], 0)).toThrow(/depth/);
         expect(() => decode([0], [0], 0)).toThrow(/tables truncated/);
-        expect(() => decode([0, 0, 0], [0], 0)).toThrow(/lane lengths truncated/);
+        expect(() => decode([0, 0, 0], [0], 0)).toThrow(/lane length/);
         expect(() => decode([0, 0, 0, 4, 4, 4, 4, ...new Array<number>(15).fill(0)], [0], 0)).toThrow(
             /lanes truncated/,
         );
