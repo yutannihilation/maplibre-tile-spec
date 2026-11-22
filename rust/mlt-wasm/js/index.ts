@@ -28,6 +28,7 @@ export {
   type MltGeometryColumns3D,
   MltGeometryType,
   type MltNamedColumn,
+  type MltStringValues,
   toElevation,
 } from "./columns";
 export {
@@ -42,6 +43,7 @@ export {
   type MltVertexRun,
 } from "./featureGeometry";
 export { tileGeoJson } from "./geojson";
+export { decodeStrings, type MltDeferredStrings } from "./strings";
 export {
   decodeTile,
   decodeTile3D,

@@ -36,23 +36,43 @@ impl<'a> ParsedStrings<'a> {
         self.lengths.iter().map(|&end| end >= 0).collect()
     }
 
+    /// The bytes every row's value is a slice of.
+    #[must_use]
+    pub fn corpus(&self) -> &str {
+        &self.data
+    }
+
     #[must_use]
     pub fn get(&self, idx: u32) -> Option<&str> {
+        let (start, end) = self.bounds(idx)?;
+        self.data.get(start.into_usize()..end.into_usize())
+    }
+
+    /// Row `idx`'s value as a byte range of [`Self::corpus`], wherever [`Self::get`] returns it.
+    #[must_use]
+    pub fn span(&self, idx: u32) -> Option<(u32, u32)> {
+        let (start, end) = self.bounds(idx)?;
+        self.data
+            .get(start.into_usize()..end.into_usize())
+            .map(|_| (start, end))
+    }
+
+    /// Where the length stream puts row `idx`, which need not be a slice of the corpus.
+    fn bounds(&self, idx: u32) -> Option<(u32, u32)> {
         let idx = idx.into_usize();
 
         let end = *self.lengths.get(idx)?;
         if end < 0 {
             return None;
         }
-        let end = decode_end(end).into_usize();
+        let end = decode_end(end);
 
         let start = idx
             .checked_sub(1)
             .and_then(|prev| self.lengths.get(prev).copied())
-            .map_or(0, decode_end)
-            .into_usize();
+            .map_or(0, decode_end);
 
-        self.data.get(start..end)
+        Some((start, end))
     }
 
     #[must_use]
@@ -193,11 +213,23 @@ impl ParsedSharedDictItem<'_> {
 
     #[must_use]
     pub fn get<'a>(&self, shared_dict: &'a ParsedSharedDict<'_>, i: usize) -> Option<&'a str> {
+        self.range(i).and_then(|span| shared_dict.get(span))
+    }
+
+    /// Feature `i`'s value as a byte range of the dictionary's corpus, wherever [`Self::get`]
+    /// returns it.
+    #[must_use]
+    pub fn span(&self, shared_dict: &ParsedSharedDict<'_>, i: usize) -> Option<(u32, u32)> {
+        self.range(i)
+            .filter(|&span| shared_dict.get(span).is_some())
+    }
+
+    /// Where feature `i` points, which need not be a slice of the corpus.
+    fn range(&self, i: usize) -> Option<(u32, u32)> {
         self.ranges
             .get(i)
             .copied()
             .and_then(decode_shared_dict_range)
-            .and_then(|span| shared_dict.get(span))
     }
 }
 

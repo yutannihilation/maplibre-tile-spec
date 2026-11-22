@@ -2,6 +2,7 @@ import {
   type MltColumnLayer,
   type MltGeometryColumns,
   MltGeometryType,
+  type MltStringValues,
 } from "./columns";
 
 /**
@@ -331,7 +332,7 @@ function resolveStarts(geometry: MltGeometryColumns): MltGeometryStarts {
  * stores triangles and no outlines: read its `indexBuffer` and `triangleOffsets` instead.
  */
 export function featureGeometry(
-  layer: MltColumnLayer,
+  layer: MltColumnLayer<MltStringValues>,
   index: number,
 ): MltFeatureGeometry {
   const { geometry } = layer;

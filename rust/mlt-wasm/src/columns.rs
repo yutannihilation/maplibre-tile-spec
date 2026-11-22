@@ -4,14 +4,17 @@
 //! Each layer crosses the boundary as one plain object whose shape `js/columns.ts` types.
 //! Every array is copied out of WASM memory once: a view into it would be detached the next
 //! time that memory grows.
+//!
+//! A string column's values cross as their UTF-8 bytes and a byte range per feature, for
+//! `js/columns.ts` to decode: a JS string made here costs a call into JS for each one.
 
 use js_sys::{
     Array, Float32Array, Float64Array, Int8Array, Int32Array, Object, Reflect, Uint8Array,
     Uint32Array,
 };
 use mlt_core::{
-    Decoder, GeometryValues, HeightMode, ParsedLayer, ParsedLayer01, ParsedProperty, ParsedStrings,
-    Parser, PresentValues, PropKind,
+    Decoder, GeometryValues, HeightMode, ParsedLayer, ParsedLayer01, ParsedProperty, Parser,
+    PresentValues, PropKind,
 };
 use wasm_bindgen::prelude::*;
 
@@ -143,13 +146,19 @@ fn property_columns(property: &ParsedProperty<'_>) -> Result<Vec<ColumnParts>, J
         ParsedProperty::U64(v) => scalar(v),
         ParsedProperty::F32(v) => scalar(v),
         ParsedProperty::F64(v) => scalar(v),
-        ParsedProperty::Str(s) => strings(s.feature_count(), |i| string_at(s, i)),
+        ParsedProperty::Str(s) => {
+            let data = Uint8Array::from(s.corpus().as_bytes());
+            strings(&data, s.feature_count(), |i| s.span(u32::try_from(i).ok()?))
+        }
         ParsedProperty::SharedDict(dict) => {
+            // One copy of the dictionary, which every child's ranges point into.
+            let data = Uint8Array::from(dict.corpus().as_bytes());
             return Ok(dict
                 .items()
                 .iter()
                 .map(|item| {
-                    let (values, present) = strings(item.feature_count(), |i| item.get(dict, i));
+                    let (values, present) =
+                        strings(&data, item.feature_count(), |i| item.span(dict, i));
                     ("string", values, present)
                 })
                 .collect());
@@ -252,20 +261,25 @@ fn type_name(kind: PropKind) -> &'static str {
     }
 }
 
-/// A string per feature, `""` where a feature has none, and the presence if any has none.
-fn strings<'s>(n: usize, get: impl Fn(usize) -> Option<&'s str>) -> (JsValue, Option<Uint8Array>) {
-    let values = Array::new_with_length(js_index(n));
-    // One lookup per feature: the bitmap's walk fills `values` as it goes.
+/// `{ data, ranges }`: the byte range of `data` each feature's string is, `(0, 0)` where a
+/// feature has none. With it, the presence if any feature has none.
+fn strings(
+    data: &Uint8Array,
+    n: usize,
+    span: impl Fn(usize) -> Option<(u32, u32)>,
+) -> (JsValue, Option<Uint8Array>) {
+    let mut ranges = Vec::with_capacity(n * 2);
+    // One lookup per feature: the bitmap's walk fills `ranges` as it goes.
     let present = bitmap(n, |i| {
-        let value = get(i);
-        values.set(js_index(i), JsValue::from_str(value.unwrap_or("")));
-        value.is_some()
+        let found = span(i);
+        let (start, end) = found.unwrap_or_default();
+        ranges.extend([start, end]);
+        found.is_some()
     });
+    let values = Object::new();
+    set(&values, "data", data);
+    set(&values, "ranges", &Uint32Array::from(&ranges[..]));
     (values.into(), present)
-}
-
-fn string_at<'s>(strings: &'s ParsedStrings<'_>, index: usize) -> Option<&'s str> {
-    strings.get(u32::try_from(index).ok()?)
 }
 
 /// One bit per feature, LSB-first, or [`None`] when every feature is present.
@@ -289,9 +303,7 @@ fn set(object: &Object, key: &str, value: &JsValue) {
 
 /// A length as a JS number. Every length here indexes a typed array, so it fits in a u32.
 fn js_len(len: usize) -> JsValue {
-    js_index(len).into()
-}
-
-fn js_index(i: usize) -> u32 {
-    u32::try_from(i).expect("an array index fits in u32")
+    u32::try_from(len)
+        .expect("a typed array's length fits in u32")
+        .into()
 }

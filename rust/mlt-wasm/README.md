@@ -90,6 +90,34 @@ feature, LSB-first, left out when every feature has a value. `bool` comes as `0`
 64-bit integers, ids included, as `Float64Array`, so values above `Number.MAX_SAFE_INTEGER`
 lose precision.
 
+A string column's `values` is a `string[]`. Making those strings is most of the work on a tile
+with many string properties: WASM hands a column over as UTF-8 bytes, and each string is
+then decoded into a JS string. A caller that reads few of the strings can leave them undecoded
+with `strings: 'deferred'` and decode only the values it reads:
+
+```ts
+import { columnValue, decodeStrings, decodeTileColumns } from '@maplibre/mlt-wasm';
+
+for (const layer of decodeTileColumns(data, { strings: 'deferred' }).layers) {
+    for (const column of layer.properties) {
+        if (column.type !== 'string') continue;
+        const { data, ranges } = column.values;
+        // data: Uint8Array of UTF-8 bytes, shared by the columns of one shared dictionary
+        // ranges: Uint32Array of (start, end) byte offsets into data, one pair per feature
+        for (let f = 0; f < layer.featureCount; f++) {
+            const value = columnValue(column, f);    // decodes this one value
+        }
+        const values = decodeStrings(column.values); // the string[] of the default
+    }
+}
+```
+
+On the 34 OpenMapTiles zoom 14 tiles in `test/expected/0x01/omt` (442 kB on average),
+`decodeTileColumns` takes about 5.2 ms per tile, and about 2.2 ms with `strings: 'deferred'` (Node,
+one machine). Reading every string afterwards, by `columnValue` or `decodeStrings`, brings it back
+to about 5 ms, so deferring pays when most strings go unread, such as when a style reads a few
+properties of each layer.
+
 A 3D layer's `zStep` is the power of ten of its z grid's step in metres; `toElevation(z, zStep)`
 converts one z to metres, exactly as `mlt-core` does.
 Its `heightMode` says what a z of `0` stands for: `"absolute"` is mean sea level and
